@@ -115,13 +115,13 @@ Additional arguments to pass to make.
 
 #### `parallel-builds`
 
-Number of concurrent builds (0 = sequential, 1-9 = parallel). Default: `0`
+Number of concurrent builds (0 = sequential, 1-9 = parallel). Default: `4`
 
 ```yaml
 - uses: BrianPugh/build-mpy-native-module@main
   with:
     micropython-version: v1.24.1
-    parallel-builds: 4
+    parallel-builds: 0
 ```
 
 #### `cache-toolchains`

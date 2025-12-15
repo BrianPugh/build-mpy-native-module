@@ -44545,7 +44545,7 @@ function validateInputs() {
     // MicroPython repository
     const micropythonRepo = core.getInput('micropython-repo') || 'https://github.com/micropython/micropython';
     // Parallel builds (0 = sequential, 1-9 = max concurrent)
-    const parallelBuildsInput = core.getInput('parallel-builds') || '0';
+    const parallelBuildsInput = core.getInput('parallel-builds') || '4';
     const parallelBuilds = parseInt(parallelBuildsInput, 10);
     if (isNaN(parallelBuilds) || parallelBuilds < 0 || parallelBuilds > 9) {
         throw new ValidationError(`Invalid parallel-builds "${parallelBuildsInput}". Must be 0-9 (0 = sequential).`);

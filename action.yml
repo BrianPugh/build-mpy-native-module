@@ -68,7 +68,7 @@ inputs:
   parallel-builds:
     description: 'Number of parallel builds (0 = sequential, 1-9 = max concurrent builds). Recommended: 2-4 for GitHub runners.'
     required: false
-    default: '0'
+    default: '4'
 
   micropython-repo:
     description: 'MicroPython repository URL (useful for testing with forks)'
