@@ -1,0 +1,90 @@
+name: Test Action
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ==========================================================================
+  # Build check: Ensure dist/ is up-to-date
+  # ==========================================================================
+
+  build-check:
+    name: Check dist/ is up-to-date
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Check for uncommitted changes
+        run: |
+          if [ -n "$(git status dist/ --porcelain)" ]; then
+            echo "::error::dist/ is out of date. Run 'npm run build' and commit the changes."
+            git diff dist/
+            exit 1
+          fi
+          echo "dist/ is up-to-date"
+
+  # ==========================================================================
+  # Real-world test: Build micropython-fnv1a32 module
+  # ==========================================================================
+
+  # Comprehensive test with a real MicroPython native module (fnv1a32)
+  # Tests all architectures, multiple versions, and parallel builds
+  test-fnv1a32:
+    name: fnv1a32 (all architectures)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout action
+        uses: actions/checkout@v4
+
+      - name: Checkout micropython-fnv1a32
+        uses: actions/checkout@v4
+        with:
+          repository: BrianPugh/micropython-fnv1a32
+          path: fnv1a32
+
+      - name: Build fnv1a32 for all architectures and versions
+        uses: ./
+        id: build
+        with:
+          # All 9 architectures
+          # rv32imc is auto-filtered for v1.24.1 (requires >= 1.25.0)
+          architecture: all
+          micropython-version: "v1.24.1, v1.25.0"
+          source-dir: fnv1a32
+          parallel-builds: "4"
+
+      - name: Verify outputs
+        run: |
+          echo "output-dir: ${{ steps.build.outputs.output-dir }}"
+          echo "architectures: ${{ steps.build.outputs.architectures }}"
+          echo "micropython-versions: ${{ steps.build.outputs.micropython-versions }}"
+          echo "mpy-files: ${{ steps.build.outputs.mpy-files }}"
+          ls -la "${{ steps.build.outputs.output-dir }}"
+          # v1.24.1: 8 architectures (rv32imc filtered out)
+          # v1.25.0: 9 architectures (all including rv32imc)
+          # Total: 17 files
+          count=$(ls -1 "${{ steps.build.outputs.output-dir }}"/*.mpy | wc -l)
+          echo "Built $count .mpy files"
+          test "$count" -eq 17
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: fnv1a32-all-architectures
+          path: ${{ steps.build.outputs.output-dir }}/*.mpy

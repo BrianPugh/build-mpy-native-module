@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output - NOTE: dist/ is NOT ignored because GitHub Actions needs the built files
+# dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test artifacts
+*.mpy
+
+# TypeScript
+*.tsbuildinfo
+
+# Declaration files in dist/ - not needed for GitHub Actions and contain machine-specific paths
+dist/**/*.d.ts
+dist/**/*.d.ts.map
