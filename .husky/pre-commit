@@ -1,0 +1,8 @@
+npx lint-staged
+
+# Auto-rebuild dist/ if src/ files are staged
+if git diff --cached --name-only | grep -q "^src/.*\.ts$"; then
+  echo "Source files changed, rebuilding dist/..."
+  npm run build
+  git add dist/
+fi

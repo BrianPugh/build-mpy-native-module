@@ -1,0 +1,107 @@
+name: 'Build MicroPython Native Module'
+description: 'Setup toolchains and build .mpy native modules for all supported architectures'
+author: 'Brian Pugh <bnp117@gmail.com>'
+branding:
+  icon: 'cpu'
+  color: 'yellow'
+
+inputs:
+  architecture:
+    description: 'Target architecture: x86, x64, armv6m, armv7m, armv7emsp, armv7emdp, xtensa, xtensawin, rv32imc, or "all" (default)'
+    required: false
+    default: 'all'
+
+  micropython-version:
+    description: 'MicroPython version(s) - single version (v1.27.0) or comma-separated list (v1.22.2, v1.25.0, v1.27.0)'
+    required: true
+
+  source-dir:
+    description: 'Directory containing the native module source code and Makefile'
+    required: false
+    default: '.'
+
+  output-name:
+    description: 'Base name for the output .mpy file (without extension). If not specified, detected from Makefile MOD variable.'
+    required: false
+    default: ''
+
+  make-target:
+    description: 'Make target to build (default: empty, uses default target)'
+    required: false
+    default: ''
+
+  make-args:
+    description: 'Additional arguments to pass to make (e.g., "DEBUG=1")'
+    required: false
+    default: ''
+
+  static-const-workaround:
+    description: 'Apply "static const" -> "const" workaround for ESP32 and other platforms (see micropython#14429)'
+    required: false
+    default: 'false'
+
+  static-const-workaround-patterns:
+    description: 'Glob patterns for files to apply static const workaround (comma-separated)'
+    required: false
+    default: '**/*.c,**/*.h'
+
+  cache-toolchains:
+    description: 'Enable caching for slow toolchain builds (xtensa, xtensawin)'
+    required: false
+    default: 'true'
+
+  esp-idf-version:
+    description: 'ESP-IDF version for xtensawin builds'
+    required: false
+    default: 'v5.0.6'
+
+  esp-open-sdk-repo:
+    description: 'Repository for esp-open-sdk (xtensa builds)'
+    required: false
+    default: 'https://github.com/BrianPugh/esp-open-sdk.git'
+
+  esp-open-sdk-branch:
+    description: 'Branch for esp-open-sdk'
+    required: false
+    default: 'fix-ubuntu-21.10-build'
+
+  parallel-builds:
+    description: 'Number of parallel builds (0 = sequential, 1-9 = max concurrent builds). Recommended: 2-4 for GitHub runners.'
+    required: false
+    default: '0'
+
+  micropython-repo:
+    description: 'MicroPython repository URL (useful for testing with forks)'
+    required: false
+    default: 'https://github.com/micropython/micropython'
+
+outputs:
+  mpy-file:
+    description: 'Path to the built .mpy file (single arch) or output directory (all archs)'
+
+  mpy-files:
+    description: 'JSON array of all built .mpy file paths'
+
+  output-dir:
+    description: 'Directory containing all built .mpy files'
+
+  mpy-dir:
+    description: 'Path to the MicroPython directory (MPY_DIR environment variable)'
+
+  architecture:
+    description: 'The architecture input that was provided'
+
+  architectures:
+    description: 'JSON array of architectures that were successfully built'
+
+  micropython-versions:
+    description: 'JSON array of MicroPython versions that were successfully built'
+
+  toolchain-cache-hit:
+    description: 'Whether the toolchain cache was hit (true/false, for xtensa/xtensawin)'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+  post: 'dist/post/index.js'
+  post-if: 'always()'
