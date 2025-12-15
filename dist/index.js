@@ -44465,10 +44465,14 @@ function validateInputs() {
     if (!types_1.VALID_ARCHITECTURES.includes(architecture)) {
         throw new ValidationError(`Invalid architecture "${architecture}". Valid options: ${types_1.VALID_ARCHITECTURES.join(', ')}`);
     }
-    // MicroPython version(s) (required) - single value or YAML list
-    const micropythonVersions = core.getMultilineInput('micropython-version', {
+    // MicroPython version(s) (required) - single value or comma-separated list
+    const micropythonVersionInput = core.getInput('micropython-version', {
         required: true,
     });
+    const micropythonVersions = micropythonVersionInput
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean);
     if (micropythonVersions.length === 0) {
         throw new ValidationError('micropython-version is required');
     }

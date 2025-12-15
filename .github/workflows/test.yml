@@ -65,9 +65,7 @@ jobs:
           # All 9 architectures
           # rv32imc is auto-filtered for v1.24.1 (requires >= 1.25.0)
           architecture: all
-          micropython-version:
-            - v1.24.1
-            - v1.25.0
+          micropython-version: v1.24.1, v1.25.0
           source-dir: fnv1a32
 
       - name: Verify outputs

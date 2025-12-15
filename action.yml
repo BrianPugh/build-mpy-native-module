@@ -12,7 +12,7 @@ inputs:
     default: 'all'
 
   micropython-version:
-    description: 'MicroPython version(s) - single version (v1.27.0) or YAML list'
+    description: 'MicroPython version(s) - single version or comma-separated list'
     required: true
 
   source-dir:

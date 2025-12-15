@@ -23,7 +23,7 @@ A GitHub Action to cross-compile MicroPython native modules (`.mpy` files) for a
 ```yaml
 - uses: BrianPugh/build-mpy-native-module@main
   with:
-    micropython-version: v1.24.1 # single version or YAML list
+    micropython-version: v1.24.1 # single version or list of versions
 ```
 
 ## Inputs
@@ -32,17 +32,18 @@ A GitHub Action to cross-compile MicroPython native modules (`.mpy` files) for a
 
 #### `micropython-version`
 
-MicroPython version(s) to build for. Can be a single version or a YAML list.
+MicroPython version(s) to build for. Can be a single version or comma-separated list.
 
 ```yaml
 # Single version
-micropython-version: v1.24.1
+- uses: BrianPugh/build-mpy-native-module@main
+  with:
+    micropython-version: v1.24.1
 
 # Multiple versions
-micropython-version:
-  - v1.22.2
-  - v1.24.1
-  - v1.25.0
+- uses: BrianPugh/build-mpy-native-module@main
+  with:
+    micropython-version: v1.22.2, v1.24.1, v1.25.0
 ```
 
 ### Optional
@@ -263,11 +264,7 @@ jobs:
   id: build
   with:
     architecture: x64
-    micropython-version:
-      - v1.22.2
-      - v1.23.0
-      - v1.24.1
-      - v1.25.0
+    micropython-version: v1.22.2, v1.23.0, v1.24.1, v1.25.0
 # Outputs files like:
 #   mymodule-mpy1.22-x64.mpy
 #   mymodule-mpy1.23-x64.mpy
@@ -281,10 +278,7 @@ jobs:
 - uses: BrianPugh/build-mpy-native-module@main
   with:
     architecture: all
-    micropython-version:
-      - v1.24.1
-      - v1.25.0
-    parallel-builds: 4
+    micropython-version: v1.24.1, v1.25.0
 # Builds 18 .mpy files (9 architectures × 2 versions)
 ```
 
