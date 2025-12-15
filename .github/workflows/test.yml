@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -50,10 +50,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout action
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Checkout micropython-fnv1a32
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: BrianPugh/micropython-fnv1a32
           path: fnv1a32
