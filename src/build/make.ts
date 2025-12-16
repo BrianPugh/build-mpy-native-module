@@ -76,7 +76,7 @@ async function copyDir(src: string, dest: string): Promise<void> {
 
 export async function runMake(options: RunMakeOptions): Promise<BuildResult> {
   const { config, toolchainEnv, concurrentBuilds = 1 } = options;
-  const { architecture, sourceDir, makeTarget, makeArgs } = config;
+  const { architecture, sourceDir, makeTarget, makeArgs, mpyCrossArgs } = config;
 
   core.info(`Building native module for ${architecture}...`);
 
@@ -130,6 +130,13 @@ export async function runMake(options: RunMakeOptions): Promise<BuildResult> {
   const effectiveConcurrency = Math.max(1, concurrentBuilds);
   const makeJobs = Math.max(1, Math.floor(numCpus / effectiveConcurrency));
   args.push(`-j${makeJobs}`);
+
+  // Add mpy-cross args if specified
+  // We need to construct MPY_CROSS_FLAGS with both -march=$(ARCH) and user args
+  // because Make command-line variables override Makefile variables
+  if (mpyCrossArgs) {
+    args.push(`MPY_CROSS_FLAGS=-march=${architecture} ${mpyCrossArgs}`);
+  }
 
   // Add custom make args
   if (makeArgs) {

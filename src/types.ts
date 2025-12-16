@@ -25,6 +25,7 @@ export interface Config {
   outputName: string;
   makeTarget: string;
   makeArgs: string;
+  mpyCrossArgs: string;
   staticConstWorkaround: boolean;
   workaroundPatterns: string[];
   cacheToolchains: boolean;

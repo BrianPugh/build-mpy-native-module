@@ -35,6 +35,11 @@ inputs:
     required: false
     default: ''
 
+  mpy-cross-args:
+    description: 'Additional arguments to pass to mpy-cross (e.g., "-march-flags=zba" for rv32imc)'
+    required: false
+    default: ''
+
   static-const-workaround:
     description: 'Apply "static const" -> "const" workaround for ESP32 and other platforms (see micropython#14429)'
     required: false

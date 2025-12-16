@@ -120,6 +120,7 @@ export function validateInputs(): Config {
   const outputName = core.getInput('output-name') || '';
   const makeTarget = core.getInput('make-target') || '';
   const makeArgs = core.getInput('make-args') || '';
+  const mpyCrossArgs = core.getInput('mpy-cross-args') || '';
   const staticConstWorkaround = core.getInput('static-const-workaround') === 'true';
   const workaroundPatterns = (core.getInput('static-const-workaround-patterns') || '**/*.c,**/*.h')
     .split(',')
@@ -160,6 +161,7 @@ export function validateInputs(): Config {
     outputName,
     makeTarget,
     makeArgs,
+    mpyCrossArgs,
     staticConstWorkaround,
     workaroundPatterns,
     cacheToolchains,

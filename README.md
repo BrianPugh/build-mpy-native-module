@@ -114,6 +114,19 @@ Additional arguments to pass to make.
     make-args: DEBUG=1
 ```
 
+#### `mpy-cross-args`
+
+Additional arguments to pass to mpy-cross. This is useful for enabling architecture-specific extensions.
+
+```yaml
+# Enable the "zba" (bit manipulation) extension for rv32imc
+- uses: BrianPugh/build-mpy-native-module@main
+  with:
+    micropython-version: v1.25.0
+    architecture: rv32imc
+    mpy-cross-args: -march-flags=zba
+```
+
 #### `parallel-builds`
 
 Number of concurrent builds (0 = sequential, 1-9 = parallel). Default: `4`
@@ -173,7 +186,7 @@ ESP-IDF version for xtensawin builds. Default: `v5.0.6`
 
 #### `esp-open-sdk-repo`
 
-Repository for esp-open-sdk (xtensa builds). Default: BrianPugh fork
+Repository for esp-open-sdk (xtensa builds). Default: BrianPugh fork that just has some maintenance/infrastructure fixes that allows it to continue to work.
 
 ```yaml
 - uses: BrianPugh/build-mpy-native-module@main

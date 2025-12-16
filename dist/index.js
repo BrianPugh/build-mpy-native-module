@@ -42538,7 +42538,7 @@ async function copyDir(src, dest) {
 }
 async function runMake(options) {
     const { config, toolchainEnv, concurrentBuilds = 1 } = options;
-    const { architecture, sourceDir, makeTarget, makeArgs } = config;
+    const { architecture, sourceDir, makeTarget, makeArgs, mpyCrossArgs } = config;
     core.info(`Building native module for ${architecture}...`);
     // Always use isolated build directory to:
     // 1. Enable parallel builds without file collisions
@@ -42584,6 +42584,12 @@ async function runMake(options) {
     const effectiveConcurrency = Math.max(1, concurrentBuilds);
     const makeJobs = Math.max(1, Math.floor(numCpus / effectiveConcurrency));
     args.push(`-j${makeJobs}`);
+    // Add mpy-cross args if specified
+    // We need to construct MPY_CROSS_FLAGS with both -march=$(ARCH) and user args
+    // because Make command-line variables override Makefile variables
+    if (mpyCrossArgs) {
+        args.push(`MPY_CROSS_FLAGS=-march=${architecture} ${mpyCrossArgs}`);
+    }
     // Add custom make args
     if (makeArgs) {
         args.push(...makeArgs.split(/\s+/).filter(Boolean));
@@ -44533,6 +44539,7 @@ function validateInputs() {
     const outputName = core.getInput('output-name') || '';
     const makeTarget = core.getInput('make-target') || '';
     const makeArgs = core.getInput('make-args') || '';
+    const mpyCrossArgs = core.getInput('mpy-cross-args') || '';
     const staticConstWorkaround = core.getInput('static-const-workaround') === 'true';
     const workaroundPatterns = (core.getInput('static-const-workaround-patterns') || '**/*.c,**/*.h')
         .split(',')
@@ -44563,6 +44570,7 @@ function validateInputs() {
         outputName,
         makeTarget,
         makeArgs,
+        mpyCrossArgs,
         staticConstWorkaround,
         workaroundPatterns,
         cacheToolchains,
