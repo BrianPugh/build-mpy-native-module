@@ -13,6 +13,7 @@ import {
   VALID_MPY_VERSIONS,
   MpyVersion,
   MPY_VERSION_MAP,
+  isMicropythonReleaseVersion,
   targetSupportsRv32imc,
 } from './mpy-versions';
 
@@ -82,31 +83,54 @@ export function validateInputs(): Config {
   const mpyVersionInput = core.getInput('mpy-version') || '';
   const micropythonVersionInput = core.getInput('micropython-version') || '';
 
-  // Check for mutually exclusive inputs
-  if (mpyVersionInput && micropythonVersionInput) {
-    throw new ValidationError(
-      'Cannot specify both mpy-version and micropython-version. Use one or the other.'
-    );
-  }
-
   // Determine build targets
   const buildTargets: BuildTarget[] = [];
 
-  if (micropythonVersionInput) {
-    // Power user mode: using raw micropython-version
+  const micropythonVersions = micropythonVersionInput
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean);
+  const isRefMode =
+    micropythonVersions.length > 0 && !micropythonVersions.every(isMicropythonReleaseVersion);
 
-    const micropythonVersions = micropythonVersionInput
+  if (isRefMode) {
+    // Git ref mode: micropython-version is a branch or commit SHA (e.g. for
+    // testing a fork). The resulting MPY subversion cannot be derived from a
+    // ref, so the user must declare it via mpy-version.
+    if (micropythonVersions.length > 1) {
+      throw new ValidationError(
+        `micropython-version "${micropythonVersionInput}" contains a git ref (branch or commit SHA); git refs cannot be combined with other versions.`
+      );
+    }
+    const ref = micropythonVersions[0];
+
+    if (!/^[\w./-]+$/.test(ref) || ref.startsWith('-')) {
+      throw new ValidationError(
+        `Invalid micropython-version "${ref}". Expected a release version (e.g. v1.22.2) or a git ref (branch name or commit SHA).`
+      );
+    }
+
+    const mpyVersions = mpyVersionInput
       .split(',')
       .map((v) => v.trim())
       .filter(Boolean);
+    if (mpyVersions.length !== 1 || !VALID_MPY_VERSIONS.includes(mpyVersions[0] as MpyVersion)) {
+      throw new ValidationError(
+        `micropython-version "${ref}" is a git ref, so the resulting MPY subversion cannot be derived; set mpy-version to exactly one of: ${VALID_MPY_VERSIONS.join(', ')} (e.g. mpy-version: 6.3).`
+      );
+    }
 
-    // Validate each version format
-    for (const version of micropythonVersions) {
-      if (!version.match(/^v?\d+\.\d+\.\d+(-[\w.]+)?$/)) {
-        throw new ValidationError(
-          `Invalid micropython-version format "${version}". Expected format: v1.22.2, 1.22.2, or v1.25.0-preview.1`
-        );
-      }
+    buildTargets.push({
+      mpyVersion: mpyVersions[0],
+      micropythonVersion: ref,
+    });
+  } else if (micropythonVersions.length > 0) {
+    // Power user mode: raw micropython-version release versions, mutually
+    // exclusive with mpy-version
+    if (mpyVersionInput) {
+      throw new ValidationError(
+        'Cannot specify both mpy-version and micropython-version. Use one or the other.'
+      );
     }
 
     // Create build targets from raw versions (deduplicating exact repeats).
