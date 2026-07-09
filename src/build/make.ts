@@ -206,10 +206,14 @@ export async function findMpyFile(
     if (expectedFile) {
       return expectedFile;
     }
-    // Expected name not found, log a warning and fall through to default logic
-    core.warning(
-      `Expected output file "${expectedName}.mpy" not found, using most recent .mpy file`
-    );
+    // output-name is often a release naming override (e.g. "module-1.2.3") that
+    // intentionally differs from the built filename, so only warn when there is
+    // more than one candidate and the fallback choice is actually ambiguous.
+    if (files.length > 1) {
+      core.warning(
+        `Expected output file "${expectedName}.mpy" not found, using most recent .mpy file`
+      );
+    }
   }
 
   if (files.length === 1) {
