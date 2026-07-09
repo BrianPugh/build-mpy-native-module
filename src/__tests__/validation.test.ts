@@ -232,6 +232,41 @@ describe('validateInputs', () => {
     expect(config.buildTargets[0].micropythonVersion).toBe('v1.12.0');
   });
 
+  it('accepts micropython-versions with distinct mpy subversions', () => {
+    mockedCore.getInput.mockImplementation((name: string) => {
+      if (name === 'source-dir') return tempDir;
+      if (name === 'micropython-version') return 'v1.21.0, v1.22.2, v1.25.0';
+      return '';
+    });
+
+    const config = validateInputs();
+    expect(config.buildTargets.map((t) => t.mpyVersion)).toEqual(['6.1', '6.2', '6.3']);
+  });
+
+  it('throws error when micropython-versions produce the same mpy subversion', () => {
+    // v1.23.0, v1.24.1, and v1.25.0 all produce mpy 6.3; output filenames would collide
+    mockedCore.getInput.mockImplementation((name: string) => {
+      if (name === 'source-dir') return tempDir;
+      if (name === 'micropython-version') return 'v1.23.0, v1.25.0';
+      return '';
+    });
+
+    expect(() => validateInputs()).toThrow(ValidationError);
+    expect(() => validateInputs()).toThrow('both produce mpy 6.3');
+  });
+
+  it('deduplicates exact micropython-version repeats', () => {
+    mockedCore.getInput.mockImplementation((name: string) => {
+      if (name === 'source-dir') return tempDir;
+      if (name === 'micropython-version') return 'v1.25.0, 1.25.0';
+      return '';
+    });
+
+    const config = validateInputs();
+    expect(config.buildTargets).toHaveLength(1);
+    expect(config.buildTargets[0].micropythonVersion).toBe('v1.25.0');
+  });
+
   it('throws error when rv32imc is requested for mpy < 6.3', () => {
     mockedCore.getInput.mockImplementation((name: string) => {
       if (name === 'source-dir') return tempDir;

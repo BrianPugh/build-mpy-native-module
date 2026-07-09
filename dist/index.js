@@ -44596,10 +44596,22 @@ function validateInputs() {
                 throw new ValidationError(`Invalid micropython-version format "${version}". Expected format: v1.22.2, 1.22.2, or v1.25.0-preview.1`);
             }
         }
-        // Create build targets from raw versions
+        // Create build targets from raw versions (deduplicating exact repeats).
+        // Distinct MicroPython versions producing the same mpy subversion are
+        // rejected: output filenames embed only the subversion, so those builds
+        // would silently overwrite each other.
+        const seenMpyVersions = new Map();
         for (const version of micropythonVersions) {
             const normalizedVersion = version.startsWith('v') ? version : `v${version}`;
             const mpyVersion = deriveMpyVersionFromMicropython(normalizedVersion);
+            const existing = seenMpyVersions.get(mpyVersion);
+            if (existing === normalizedVersion) {
+                continue;
+            }
+            if (existing) {
+                throw new ValidationError(`micropython-version values ${existing} and ${normalizedVersion} both produce mpy ${mpyVersion}, so their output filenames would collide. Specify at most one MicroPython version per mpy subversion.`);
+            }
+            seenMpyVersions.set(mpyVersion, normalizedVersion);
             buildTargets.push({
                 mpyVersion,
                 micropythonVersion: normalizedVersion,
