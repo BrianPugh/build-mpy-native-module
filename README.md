@@ -105,6 +105,8 @@ Directory containing native module source and Makefile. Default: `.`
 
 Base name for output `.mpy` file. Default: Auto-detected from Makefile `MOD` variable.
 
+This can also be used to inject extra metadata (e.g. a package version) into release filenames: `output-name: mymodule-1.2.3` produces `mymodule-1.2.3-mpy6.3-x64.mpy`.
+
 ```yaml
 - uses: BrianPugh/build-mpy-native-module@main
   with:

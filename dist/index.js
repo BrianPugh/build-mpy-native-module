@@ -43089,9 +43089,10 @@ async function buildForArchitecture(architecture, target, config, toolchainEnv, 
             concurrentBuilds,
         });
         buildDir = buildResult.buildDir;
-        // Copy the built file to output directory with mpy version and architecture suffix
+        // Copy the built file to output directory with mpy version and architecture suffix.
+        // output-name overrides the base name so callers can inject e.g. a package version.
         const ext = path.extname(buildResult.mpyFile);
-        const baseName = path.basename(buildResult.mpyFile, ext);
+        const baseName = config.outputName || path.basename(buildResult.mpyFile, ext);
         const outputFileName = `${baseName}-mpy${target.mpyVersion}-${architecture}${ext}`;
         const outputPath = path.join(outputDir, outputFileName);
         fs.copyFileSync(buildResult.mpyFile, outputPath);
