@@ -2,14 +2,20 @@ import * as core from '@actions/core';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { resolveArchitecturesForMpy, validateInputs, ValidationError } from '../validation';
+import { resolveArchitectures, validateInputs, ValidationError } from '../validation';
 import {
   mpyVersionSupportsRv32imc,
   micropythonVersionSupportsRv32imc,
+  targetSupportsRv32imc,
   VALID_MPY_VERSIONS,
   MPY_VERSION_MAP,
 } from '../mpy-versions';
-import { SINGLE_ARCHITECTURES } from '../types';
+import { SINGLE_ARCHITECTURES, BuildTarget } from '../types';
+
+/** Build target for an mpy version using its recommended MicroPython version. */
+function mpyTarget(mpyVersion: string): BuildTarget {
+  return { mpyVersion, micropythonVersion: MPY_VERSION_MAP[mpyVersion] };
+}
 
 // Mock @actions/core
 jest.mock('@actions/core');
@@ -61,33 +67,65 @@ describe('micropythonVersionSupportsRv32imc', () => {
   });
 });
 
-describe('resolveArchitecturesForMpy', () => {
+describe('targetSupportsRv32imc', () => {
+  it('returns true for mpy 6.3 with its recommended MicroPython version', () => {
+    expect(targetSupportsRv32imc(mpyTarget('6.3'))).toBe(true);
+  });
+
+  it('returns false for mpy versions < 6.3', () => {
+    expect(targetSupportsRv32imc(mpyTarget('6.2'))).toBe(false);
+    expect(targetSupportsRv32imc(mpyTarget('6.1'))).toBe(false);
+    expect(targetSupportsRv32imc(mpyTarget('6'))).toBe(false);
+    expect(targetSupportsRv32imc(mpyTarget('5'))).toBe(false);
+  });
+
+  it('returns false for mpy 6.3 targets built with MicroPython < 1.25.0', () => {
+    // mpy 6.3 spans v1.23.0+, but rv32imc only exists in MicroPython >= 1.25.0
+    expect(targetSupportsRv32imc({ mpyVersion: '6.3', micropythonVersion: 'v1.23.0' })).toBe(false);
+    expect(targetSupportsRv32imc({ mpyVersion: '6.3', micropythonVersion: 'v1.24.1' })).toBe(false);
+    expect(targetSupportsRv32imc({ mpyVersion: '6.3', micropythonVersion: 'v1.25.0' })).toBe(true);
+  });
+});
+
+describe('resolveArchitectures', () => {
   it('returns all architectures including rv32imc for mpy 6.3', () => {
-    const archs = resolveArchitecturesForMpy('all', '6.3');
+    const archs = resolveArchitectures('all', [mpyTarget('6.3')]);
     expect(archs).toEqual([...SINGLE_ARCHITECTURES]);
     expect(archs).toContain('rv32imc');
   });
 
   it('excludes rv32imc for mpy versions < 6.3', () => {
-    const archs = resolveArchitecturesForMpy('all', '6.2');
+    const archs = resolveArchitectures('all', [mpyTarget('6.2')]);
     expect(archs).not.toContain('rv32imc');
     expect(archs.length).toBe(SINGLE_ARCHITECTURES.length - 1);
 
-    const archs6 = resolveArchitecturesForMpy('all', '6');
+    const archs6 = resolveArchitectures('all', [mpyTarget('6')]);
     expect(archs6).not.toContain('rv32imc');
 
-    const archs5 = resolveArchitecturesForMpy('all', '5');
+    const archs5 = resolveArchitectures('all', [mpyTarget('5')]);
     expect(archs5).not.toContain('rv32imc');
   });
 
+  it('includes rv32imc when any target supports it', () => {
+    const archs = resolveArchitectures('all', [mpyTarget('6.2'), mpyTarget('6.3')]);
+    expect(archs).toContain('rv32imc');
+  });
+
+  it('excludes rv32imc for mpy 6.3 targets built with MicroPython < 1.25.0', () => {
+    const archs = resolveArchitectures('all', [
+      { mpyVersion: '6.3', micropythonVersion: 'v1.24.1' },
+    ]);
+    expect(archs).not.toContain('rv32imc');
+  });
+
   it('returns single architecture when specified', () => {
-    expect(resolveArchitecturesForMpy('x64', '6.2')).toEqual(['x64']);
-    expect(resolveArchitecturesForMpy('armv6m', '6.2')).toEqual(['armv6m']);
-    expect(resolveArchitecturesForMpy('xtensawin', '6.2')).toEqual(['xtensawin']);
+    expect(resolveArchitectures('x64', [mpyTarget('6.2')])).toEqual(['x64']);
+    expect(resolveArchitectures('armv6m', [mpyTarget('6.2')])).toEqual(['armv6m']);
+    expect(resolveArchitectures('xtensawin', [mpyTarget('6.2')])).toEqual(['xtensawin']);
   });
 
   it('returns rv32imc when explicitly requested for mpy 6.3', () => {
-    expect(resolveArchitecturesForMpy('rv32imc', '6.3')).toEqual(['rv32imc']);
+    expect(resolveArchitectures('rv32imc', [mpyTarget('6.3')])).toEqual(['rv32imc']);
   });
 });
 
@@ -204,6 +242,44 @@ describe('validateInputs', () => {
 
     expect(() => validateInputs()).toThrow(ValidationError);
     expect(() => validateInputs()).toThrow('rv32imc requires mpy 6.3+');
+  });
+
+  it('throws error when rv32imc is requested for micropython-version < 1.25.0', () => {
+    // v1.24.1 derives mpy 6.3, but rv32imc only exists in MicroPython >= 1.25.0
+    mockedCore.getInput.mockImplementation((name: string) => {
+      if (name === 'source-dir') return tempDir;
+      if (name === 'architecture') return 'rv32imc';
+      if (name === 'micropython-version') return 'v1.24.1';
+      return '';
+    });
+
+    expect(() => validateInputs()).toThrow(ValidationError);
+    expect(() => validateInputs()).toThrow('rv32imc requires mpy 6.3+');
+  });
+
+  it('allows rv32imc for micropython-version >= 1.25.0', () => {
+    mockedCore.getInput.mockImplementation((name: string) => {
+      if (name === 'source-dir') return tempDir;
+      if (name === 'architecture') return 'rv32imc';
+      if (name === 'micropython-version') return 'v1.25.0';
+      return '';
+    });
+
+    const config = validateInputs();
+    expect(config.architectures).toContain('rv32imc');
+  });
+
+  it('filters rv32imc from "all" architectures for micropython-version < 1.25.0', () => {
+    mockedCore.getInput.mockImplementation((name: string) => {
+      if (name === 'source-dir') return tempDir;
+      if (name === 'architecture') return 'all';
+      if (name === 'micropython-version') return 'v1.24.1';
+      return '';
+    });
+
+    const config = validateInputs();
+    expect(config.buildTargets[0].mpyVersion).toBe('6.3');
+    expect(config.architectures).not.toContain('rv32imc');
   });
 
   it('allows rv32imc for mpy 6.3', () => {

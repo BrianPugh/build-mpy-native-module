@@ -7,6 +7,8 @@
  * See: https://docs.micropython.org/en/latest/reference/mpyfiles.html#versioning-and-compatibility-of-mpy-files
  */
 
+import { BuildTarget } from './types';
+
 /**
  * MPY subversion to recommended MicroPython version mapping.
  *
@@ -58,4 +60,17 @@ export function micropythonVersionSupportsRv32imc(micropythonVersion: string): b
   const normalizedVersion = micropythonVersion.replace(/^v/, '').split('-')[0];
   const [major, minor] = normalizedVersion.split('.').map(Number);
   return major > 1 || (major === 1 && minor >= 25);
+}
+
+/**
+ * Check if a build target supports rv32imc architecture.
+ * Both checks are needed: mpy 6.3 spans MicroPython v1.23.0+, but rv32imc
+ * only exists in MicroPython >= 1.25.0, so a raw micropython-version of
+ * v1.23.x/v1.24.x derives mpy 6.3 yet cannot build rv32imc.
+ */
+export function targetSupportsRv32imc(target: BuildTarget): boolean {
+  return (
+    mpyVersionSupportsRv32imc(target.mpyVersion as MpyVersion) &&
+    micropythonVersionSupportsRv32imc(target.micropythonVersion)
+  );
 }

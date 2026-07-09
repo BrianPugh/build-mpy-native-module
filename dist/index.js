@@ -43020,11 +43020,11 @@ const build_1 = __nccwpck_require__(62028);
 const utils_1 = __nccwpck_require__(71798);
 const mpy_versions_1 = __nccwpck_require__(87933);
 /**
- * Get architectures supported for a specific MPY version.
- * rv32imc is only available for mpy 6.3+
+ * Get architectures supported for a specific build target.
+ * rv32imc requires mpy 6.3+ AND MicroPython >= 1.25.0
  */
-function getArchitecturesForTarget(requestedArchitectures, mpyVersion) {
-    if (!(0, mpy_versions_1.mpyVersionSupportsRv32imc)(mpyVersion)) {
+function getArchitecturesForTarget(requestedArchitectures, target) {
+    if (!(0, mpy_versions_1.targetSupportsRv32imc)(target)) {
         return requestedArchitectures.filter((a) => a !== 'rv32imc');
     }
     return requestedArchitectures;
@@ -43170,7 +43170,7 @@ async function run() {
             await (0, micropython_1.setupMicroPython)(target.micropythonVersion, config.micropythonRepo);
             core.endGroup();
             // Get architectures for this target (may exclude rv32imc for older versions)
-            const architecturesForTarget = getArchitecturesForTarget(config.architectures, target.mpyVersion);
+            const architecturesForTarget = getArchitecturesForTarget(config.architectures, target);
             if (architecturesForTarget.length < config.architectures.length) {
                 const skipped = config.architectures.filter((a) => !architecturesForTarget.includes(a));
                 core.info(`Skipping architectures not supported by mpy ${target.mpyVersion}: ${skipped.join(', ')}`);
@@ -43395,6 +43395,7 @@ exports.MPY_VERSIONS_WITH_RV32IMC = exports.VALID_MPY_VERSIONS = exports.MPY_VER
 exports.getMicroPythonVersionForMpy = getMicroPythonVersionForMpy;
 exports.mpyVersionSupportsRv32imc = mpyVersionSupportsRv32imc;
 exports.micropythonVersionSupportsRv32imc = micropythonVersionSupportsRv32imc;
+exports.targetSupportsRv32imc = targetSupportsRv32imc;
 /**
  * MPY subversion to recommended MicroPython version mapping.
  *
@@ -43439,6 +43440,16 @@ function micropythonVersionSupportsRv32imc(micropythonVersion) {
     const normalizedVersion = micropythonVersion.replace(/^v/, '').split('-')[0];
     const [major, minor] = normalizedVersion.split('.').map(Number);
     return major > 1 || (major === 1 && minor >= 25);
+}
+/**
+ * Check if a build target supports rv32imc architecture.
+ * Both checks are needed: mpy 6.3 spans MicroPython v1.23.0+, but rv32imc
+ * only exists in MicroPython >= 1.25.0, so a raw micropython-version of
+ * v1.23.x/v1.24.x derives mpy 6.3 yet cannot build rv32imc.
+ */
+function targetSupportsRv32imc(target) {
+    return (mpyVersionSupportsRv32imc(target.mpyVersion) &&
+        micropythonVersionSupportsRv32imc(target.micropythonVersion));
 }
 
 
@@ -44502,7 +44513,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ValidationError = void 0;
-exports.resolveArchitecturesForMpy = resolveArchitecturesForMpy;
+exports.resolveArchitectures = resolveArchitectures;
 exports.validateInputs = validateInputs;
 const core = __importStar(__nccwpck_require__(37484));
 const fs = __importStar(__nccwpck_require__(79896));
@@ -44517,13 +44528,15 @@ class ValidationError extends Error {
 }
 exports.ValidationError = ValidationError;
 /**
- * Resolve architectures for a given MPY version.
- * rv32imc is only supported on mpy 6.3+ (MicroPython >= 1.25.0)
+ * Resolve architectures for the given build targets.
+ * rv32imc is included only if at least one target supports it (mpy 6.3+ AND
+ * MicroPython >= 1.25.0); targets that don't support it are filtered again
+ * per-build at runtime.
  */
-function resolveArchitecturesForMpy(architecture, mpyVersion) {
+function resolveArchitectures(architecture, buildTargets) {
     if (architecture === 'all') {
         const archs = [...types_1.SINGLE_ARCHITECTURES];
-        if (!(0, mpy_versions_1.mpyVersionSupportsRv32imc)(mpyVersion)) {
+        if (!buildTargets.some(mpy_versions_1.targetSupportsRv32imc)) {
             return archs.filter((a) => a !== 'rv32imc');
         }
         return archs;
@@ -44626,21 +44639,13 @@ function validateInputs() {
     // rv32imc validation - check if any build target doesn't support it
     if (architecture === 'rv32imc') {
         for (const target of buildTargets) {
-            if (!(0, mpy_versions_1.mpyVersionSupportsRv32imc)(target.mpyVersion)) {
-                throw new ValidationError(`Architecture rv32imc requires mpy 6.3+ (MicroPython >= 1.25.0), but mpy ${target.mpyVersion} was requested`);
+            if (!(0, mpy_versions_1.targetSupportsRv32imc)(target)) {
+                throw new ValidationError(`Architecture rv32imc requires mpy 6.3+ (MicroPython >= 1.25.0), but mpy ${target.mpyVersion} (${target.micropythonVersion}) was requested`);
             }
         }
     }
     // Resolve the list of architectures to build
-    // Use the highest mpy version to determine the max architecture set
-    const sortedTargets = [...buildTargets].sort((a, b) => {
-        // Sort by mpy version descending (6.3 > 6.2 > 6.1 > 6 > 5)
-        const aNum = parseFloat(a.mpyVersion);
-        const bNum = parseFloat(b.mpyVersion);
-        return bNum - aNum;
-    });
-    const highestMpyVersion = sortedTargets[0].mpyVersion;
-    const architectures = resolveArchitecturesForMpy(architecture, highestMpyVersion);
+    const architectures = resolveArchitectures(architecture, buildTargets);
     // Source directory
     const sourceDir = path.resolve(core.getInput('source-dir') || '.');
     if (!fs.existsSync(sourceDir)) {

@@ -13,7 +13,7 @@ import {
   VALID_MPY_VERSIONS,
   MpyVersion,
   MPY_VERSION_MAP,
-  mpyVersionSupportsRv32imc,
+  targetSupportsRv32imc,
 } from './mpy-versions';
 
 export class ValidationError extends Error {
@@ -24,16 +24,18 @@ export class ValidationError extends Error {
 }
 
 /**
- * Resolve architectures for a given MPY version.
- * rv32imc is only supported on mpy 6.3+ (MicroPython >= 1.25.0)
+ * Resolve architectures for the given build targets.
+ * rv32imc is included only if at least one target supports it (mpy 6.3+ AND
+ * MicroPython >= 1.25.0); targets that don't support it are filtered again
+ * per-build at runtime.
  */
-export function resolveArchitecturesForMpy(
+export function resolveArchitectures(
   architecture: Architecture,
-  mpyVersion: string
+  buildTargets: BuildTarget[]
 ): SingleArchitecture[] {
   if (architecture === 'all') {
     const archs = [...SINGLE_ARCHITECTURES];
-    if (!mpyVersionSupportsRv32imc(mpyVersion as MpyVersion)) {
+    if (!buildTargets.some(targetSupportsRv32imc)) {
       return archs.filter((a) => a !== 'rv32imc');
     }
     return archs;
@@ -154,24 +156,16 @@ export function validateInputs(): Config {
   // rv32imc validation - check if any build target doesn't support it
   if (architecture === 'rv32imc') {
     for (const target of buildTargets) {
-      if (!mpyVersionSupportsRv32imc(target.mpyVersion as MpyVersion)) {
+      if (!targetSupportsRv32imc(target)) {
         throw new ValidationError(
-          `Architecture rv32imc requires mpy 6.3+ (MicroPython >= 1.25.0), but mpy ${target.mpyVersion} was requested`
+          `Architecture rv32imc requires mpy 6.3+ (MicroPython >= 1.25.0), but mpy ${target.mpyVersion} (${target.micropythonVersion}) was requested`
         );
       }
     }
   }
 
   // Resolve the list of architectures to build
-  // Use the highest mpy version to determine the max architecture set
-  const sortedTargets = [...buildTargets].sort((a, b) => {
-    // Sort by mpy version descending (6.3 > 6.2 > 6.1 > 6 > 5)
-    const aNum = parseFloat(a.mpyVersion);
-    const bNum = parseFloat(b.mpyVersion);
-    return bNum - aNum;
-  });
-  const highestMpyVersion = sortedTargets[0].mpyVersion;
-  const architectures = resolveArchitecturesForMpy(architecture as Architecture, highestMpyVersion);
+  const architectures = resolveArchitectures(architecture as Architecture, buildTargets);
 
   // Source directory
   const sourceDir = path.resolve(core.getInput('source-dir') || '.');

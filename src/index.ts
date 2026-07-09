@@ -9,7 +9,7 @@ import { setupMicroPython } from './micropython';
 import { runMake, cleanupBuildDir } from './build';
 import { SingleArchitecture, Config, ToolchainEnv, BuildTarget } from './types';
 import { parallelMap } from './utils';
-import { mpyVersionSupportsRv32imc, MpyVersion } from './mpy-versions';
+import { targetSupportsRv32imc } from './mpy-versions';
 
 interface BuildResult {
   architecture: SingleArchitecture;
@@ -27,14 +27,14 @@ interface ToolchainSetupResult {
 }
 
 /**
- * Get architectures supported for a specific MPY version.
- * rv32imc is only available for mpy 6.3+
+ * Get architectures supported for a specific build target.
+ * rv32imc requires mpy 6.3+ AND MicroPython >= 1.25.0
  */
 function getArchitecturesForTarget(
   requestedArchitectures: SingleArchitecture[],
-  mpyVersion: string
+  target: BuildTarget
 ): SingleArchitecture[] {
-  if (!mpyVersionSupportsRv32imc(mpyVersion as MpyVersion)) {
+  if (!targetSupportsRv32imc(target)) {
     return requestedArchitectures.filter((a) => a !== 'rv32imc');
   }
   return requestedArchitectures;
@@ -213,10 +213,7 @@ async function run(): Promise<void> {
       core.endGroup();
 
       // Get architectures for this target (may exclude rv32imc for older versions)
-      const architecturesForTarget = getArchitecturesForTarget(
-        config.architectures,
-        target.mpyVersion
-      );
+      const architecturesForTarget = getArchitecturesForTarget(config.architectures, target);
 
       if (architecturesForTarget.length < config.architectures.length) {
         const skipped = config.architectures.filter((a) => !architecturesForTarget.includes(a));
