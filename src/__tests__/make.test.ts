@@ -1,3 +1,4 @@
+import * as core from '@actions/core';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -25,6 +26,28 @@ describe('findMpyFile', () => {
 
     const result = await findMpyFile(tempDir);
     expect(result).toBe(mpyFile);
+  });
+
+  it('does not warn when expectedName mismatches a single unambiguous artifact', async () => {
+    const warningSpy = jest.spyOn(core, 'warning').mockImplementation(() => {});
+    const mpyFile = path.join(tempDir, 'mymodule.mpy');
+    fs.writeFileSync(mpyFile, 'fake mpy content');
+
+    // output-name used as a release naming override (e.g. "mymodule-1.2.3")
+    const result = await findMpyFile(tempDir, 'mymodule-1.2.3');
+    expect(result).toBe(mpyFile);
+    expect(warningSpy).not.toHaveBeenCalled();
+    warningSpy.mockRestore();
+  });
+
+  it('warns when expectedName mismatches and multiple candidates exist', async () => {
+    const warningSpy = jest.spyOn(core, 'warning').mockImplementation(() => {});
+    fs.writeFileSync(path.join(tempDir, 'one.mpy'), 'content 1');
+    fs.writeFileSync(path.join(tempDir, 'two.mpy'), 'content 2');
+
+    await findMpyFile(tempDir, 'nonexistent');
+    expect(warningSpy).toHaveBeenCalled();
+    warningSpy.mockRestore();
   });
 
   it('prefers file matching expectedName', async () => {

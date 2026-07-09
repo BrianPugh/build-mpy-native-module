@@ -16,10 +16,18 @@ export const VALID_ARCHITECTURES = [...SINGLE_ARCHITECTURES, 'all'] as const;
 
 export type Architecture = (typeof VALID_ARCHITECTURES)[number];
 
+/**
+ * A build target specifies an MPY subversion and the MicroPython version used to build it.
+ */
+export interface BuildTarget {
+  mpyVersion: string; // e.g., '6.3', '6.2', '6.1', '6', '5'
+  micropythonVersion: string; // e.g., 'v1.27.0', 'v1.22.2'
+}
+
 export interface Config {
   architecture: Architecture;
   architectures: SingleArchitecture[]; // Resolved list of architectures to build
-  micropythonVersions: string[]; // List of versions to build
+  buildTargets: BuildTarget[]; // List of mpy version -> micropython version pairs to build
   micropythonRepo: string; // MicroPython repository URL
   sourceDir: string;
   outputName: string;

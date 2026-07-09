@@ -5,9 +5,16 @@ import {
   Config,
   Architecture,
   SingleArchitecture,
+  BuildTarget,
   VALID_ARCHITECTURES,
   SINGLE_ARCHITECTURES,
 } from './types';
+import {
+  VALID_MPY_VERSIONS,
+  MpyVersion,
+  MPY_VERSION_MAP,
+  targetSupportsRv32imc,
+} from './mpy-versions';
 
 export class ValidationError extends Error {
   constructor(message: string) {
@@ -16,26 +23,50 @@ export class ValidationError extends Error {
   }
 }
 
-export function supportsRv32imc(micropythonVersion: string): boolean {
-  // Remove 'v' prefix and pre-release suffix (e.g., v1.25.0-preview.1 -> 1.25.0)
-  const normalizedVersion = micropythonVersion.replace(/^v/, '').split('-')[0];
-  const [major, minor] = normalizedVersion.split('.').map(Number);
-  return major > 1 || (major === 1 && minor >= 25);
-}
-
+/**
+ * Resolve architectures for the given build targets.
+ * rv32imc is included only if at least one target supports it (mpy 6.3+ AND
+ * MicroPython >= 1.25.0); targets that don't support it are filtered again
+ * per-build at runtime.
+ */
 export function resolveArchitectures(
   architecture: Architecture,
-  micropythonVersion: string
+  buildTargets: BuildTarget[]
 ): SingleArchitecture[] {
   if (architecture === 'all') {
-    // Build all architectures, excluding rv32imc if MicroPython < 1.25.0
     const archs = [...SINGLE_ARCHITECTURES];
-    if (!supportsRv32imc(micropythonVersion)) {
+    if (!buildTargets.some(targetSupportsRv32imc)) {
       return archs.filter((a) => a !== 'rv32imc');
     }
     return archs;
   }
   return [architecture];
+}
+
+/**
+ * Derive MPY version from a MicroPython version string.
+ * Used when user specifies raw micropython-version.
+ * Throws ValidationError for versions older than v1.12 (mpy < 5).
+ */
+function deriveMpyVersionFromMicropython(micropythonVersion: string): MpyVersion {
+  const normalized = micropythonVersion.replace(/^v/, '').split('-')[0];
+  const [major, minor] = normalized.split('.').map(Number);
+
+  if (major !== 1) {
+    // Future-proof: assume mpy 6.3+ for major > 1
+    return '6.3';
+  }
+
+  if (minor >= 23) return '6.3';
+  if (minor === 22) return '6.2';
+  if (minor >= 20 && minor <= 21) return '6.1';
+  if (minor === 19) return '6';
+  if (minor >= 12 && minor <= 18) return '5';
+
+  // Versions older than v1.12 are not supported
+  throw new ValidationError(
+    `MicroPython ${micropythonVersion} is too old. This action requires MicroPython >= v1.12 (mpy version 5+).`
+  );
 }
 
 export function validateInputs(): Config {
@@ -47,64 +78,108 @@ export function validateInputs(): Config {
     );
   }
 
-  // MicroPython version(s) (required) - single value or comma-separated list
-  const micropythonVersionInput = core.getInput('micropython-version', {
-    required: true,
-  });
-  const micropythonVersions = micropythonVersionInput
-    .split(',')
-    .map((v) => v.trim())
-    .filter(Boolean);
+  // Parse mpy-version input
+  const mpyVersionInput = core.getInput('mpy-version') || '';
+  const micropythonVersionInput = core.getInput('micropython-version') || '';
 
-  if (micropythonVersions.length === 0) {
-    throw new ValidationError('micropython-version is required');
+  // Check for mutually exclusive inputs
+  if (mpyVersionInput && micropythonVersionInput) {
+    throw new ValidationError(
+      'Cannot specify both mpy-version and micropython-version. Use one or the other.'
+    );
   }
 
-  // Validate each version format (supports pre-release versions like v1.25.0-preview.1)
-  for (const version of micropythonVersions) {
-    if (!version.match(/^v?\d+\.\d+\.\d+(-[\w.]+)?$/)) {
-      throw new ValidationError(
-        `Invalid micropython-version format "${version}". Expected format: v1.22.2, 1.22.2, or v1.25.0-preview.1`
-      );
+  // Determine build targets
+  const buildTargets: BuildTarget[] = [];
+
+  if (micropythonVersionInput) {
+    // Power user mode: using raw micropython-version
+
+    const micropythonVersions = micropythonVersionInput
+      .split(',')
+      .map((v) => v.trim())
+      .filter(Boolean);
+
+    // Validate each version format
+    for (const version of micropythonVersions) {
+      if (!version.match(/^v?\d+\.\d+\.\d+(-[\w.]+)?$/)) {
+        throw new ValidationError(
+          `Invalid micropython-version format "${version}". Expected format: v1.22.2, 1.22.2, or v1.25.0-preview.1`
+        );
+      }
+    }
+
+    // Create build targets from raw versions (deduplicating exact repeats).
+    // Distinct MicroPython versions producing the same mpy subversion are
+    // rejected: output filenames embed only the subversion, so those builds
+    // would silently overwrite each other.
+    const seenMpyVersions = new Map<string, string>();
+    for (const version of micropythonVersions) {
+      const normalizedVersion = version.startsWith('v') ? version : `v${version}`;
+      const mpyVersion = deriveMpyVersionFromMicropython(normalizedVersion);
+      const existing = seenMpyVersions.get(mpyVersion);
+      if (existing === normalizedVersion) {
+        continue;
+      }
+      if (existing) {
+        throw new ValidationError(
+          `micropython-version values ${existing} and ${normalizedVersion} both produce mpy ${mpyVersion}, so their output filenames would collide. Specify at most one MicroPython version per mpy subversion.`
+        );
+      }
+      seenMpyVersions.set(mpyVersion, normalizedVersion);
+      buildTargets.push({
+        mpyVersion,
+        micropythonVersion: normalizedVersion,
+      });
+    }
+  } else {
+    // Normal mode: using mpy-version (default: 6.3)
+    const mpyVersions = (mpyVersionInput || '6.3')
+      .split(',')
+      .map((v) => v.trim())
+      .filter(Boolean);
+
+    // Handle 'all' special value
+    const resolvedMpyVersions: MpyVersion[] = [];
+    for (const v of mpyVersions) {
+      if (v === 'all') {
+        resolvedMpyVersions.push(...VALID_MPY_VERSIONS);
+      } else if (VALID_MPY_VERSIONS.includes(v as MpyVersion)) {
+        resolvedMpyVersions.push(v as MpyVersion);
+      } else {
+        throw new ValidationError(
+          `Invalid mpy-version "${v}". Valid options: ${VALID_MPY_VERSIONS.join(', ')}, all`
+        );
+      }
+    }
+
+    // Remove duplicates and create build targets
+    const uniqueMpyVersions = [...new Set(resolvedMpyVersions)];
+    for (const mpyVersion of uniqueMpyVersions) {
+      buildTargets.push({
+        mpyVersion,
+        micropythonVersion: MPY_VERSION_MAP[mpyVersion],
+      });
     }
   }
 
-  // rv32imc requires MicroPython >= 1.25.0 (only check for single arch)
+  if (buildTargets.length === 0) {
+    throw new ValidationError('No build targets specified');
+  }
+
+  // rv32imc validation - check if any build target doesn't support it
   if (architecture === 'rv32imc') {
-    for (const version of micropythonVersions) {
-      if (!supportsRv32imc(version)) {
+    for (const target of buildTargets) {
+      if (!targetSupportsRv32imc(target)) {
         throw new ValidationError(
-          `Architecture rv32imc requires MicroPython >= 1.25.0, got ${version}`
+          `Architecture rv32imc requires mpy 6.3+ (MicroPython >= 1.25.0), but mpy ${target.mpyVersion} (${target.micropythonVersion}) was requested`
         );
       }
     }
   }
 
-  // Resolve the list of architectures to build (use lowest version for exclusions)
-  // Sort versions and use the lowest to determine architecture compatibility
-  const sortedVersions = [...micropythonVersions].sort((a, b) => {
-    // Remove 'v' prefix and split off pre-release suffix
-    const parseVersion = (v: string) => {
-      const normalized = v.replace(/^v/, '');
-      const [versionPart, prerelease] = normalized.split('-');
-      const [major, minor, patch] = versionPart.split('.').map(Number);
-      return { major, minor, patch, prerelease };
-    };
-    const av = parseVersion(a);
-    const bv = parseVersion(b);
-    if (av.major !== bv.major) return av.major - bv.major;
-    if (av.minor !== bv.minor) return av.minor - bv.minor;
-    if (av.patch !== bv.patch) return av.patch - bv.patch;
-    // Pre-release versions sort before release versions (e.g., 1.25.0-preview < 1.25.0)
-    if (av.prerelease && !bv.prerelease) return -1;
-    if (!av.prerelease && bv.prerelease) return 1;
-    // Both have prerelease, compare alphabetically
-    if (av.prerelease && bv.prerelease) return av.prerelease.localeCompare(bv.prerelease);
-    return 0;
-  });
-  const highestVersion = sortedVersions[sortedVersions.length - 1];
-
-  const architectures = resolveArchitectures(architecture as Architecture, highestVersion);
+  // Resolve the list of architectures to build
+  const architectures = resolveArchitectures(architecture as Architecture, buildTargets);
 
   // Source directory
   const sourceDir = path.resolve(core.getInput('source-dir') || '.');
@@ -155,7 +230,7 @@ export function validateInputs(): Config {
   return {
     architecture: architecture as Architecture,
     architectures,
-    micropythonVersions,
+    buildTargets,
     micropythonRepo,
     sourceDir,
     outputName,
