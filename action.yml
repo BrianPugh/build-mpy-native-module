@@ -115,7 +115,7 @@ outputs:
     description: 'Whether the toolchain cache was hit (true/false, for xtensa/xtensawin)'
 
 runs:
-  using: 'node20'
+  using: 'node24'
   main: 'dist/index.js'
   post: 'dist/post/index.js'
   post-if: 'always()'
