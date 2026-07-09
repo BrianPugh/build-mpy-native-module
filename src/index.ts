@@ -2,16 +2,18 @@ import * as core from '@actions/core';
 import * as crypto from 'crypto';
 import * as path from 'path';
 import * as fs from 'fs';
-import { validateInputs, ValidationError, supportsRv32imc } from './validation';
+import { validateInputs, ValidationError } from './validation';
 import { createToolchain } from './toolchains';
 import { ToolchainCache } from './cache';
-import { setupMicroPython, getMicroPythonMajorMinor } from './micropython';
+import { setupMicroPython } from './micropython';
 import { runMake, cleanupBuildDir } from './build';
-import { SingleArchitecture, Config, ToolchainEnv } from './types';
+import { SingleArchitecture, Config, ToolchainEnv, BuildTarget } from './types';
 import { parallelMap } from './utils';
+import { mpyVersionSupportsRv32imc, MpyVersion } from './mpy-versions';
 
 interface BuildResult {
   architecture: SingleArchitecture;
+  mpyVersion: string;
   micropythonVersion: string;
   mpyFile: string;
   success: boolean;
@@ -24,11 +26,15 @@ interface ToolchainSetupResult {
   cacheHit: boolean;
 }
 
-function getArchitecturesForVersion(
+/**
+ * Get architectures supported for a specific MPY version.
+ * rv32imc is only available for mpy 6.3+
+ */
+function getArchitecturesForTarget(
   requestedArchitectures: SingleArchitecture[],
-  micropythonVersion: string
+  mpyVersion: string
 ): SingleArchitecture[] {
-  if (!supportsRv32imc(micropythonVersion)) {
+  if (!mpyVersionSupportsRv32imc(mpyVersion as MpyVersion)) {
     return requestedArchitectures.filter((a) => a !== 'rv32imc');
   }
   return requestedArchitectures;
@@ -91,15 +97,13 @@ async function setupToolchain(
  */
 async function buildForArchitecture(
   architecture: SingleArchitecture,
-  micropythonVersion: string,
+  target: BuildTarget,
   config: Config,
   toolchainEnv: ToolchainEnv,
   outputDir: string,
   concurrentBuilds: number = 1
 ): Promise<BuildResult> {
-  const mpyMajorMinor = getMicroPythonMajorMinor(micropythonVersion);
-
-  core.info(`Building: ${architecture} / MicroPython ${micropythonVersion}`);
+  core.info(`Building: ${architecture} / mpy ${target.mpyVersion} (${target.micropythonVersion})`);
 
   let buildDir: string | undefined;
   try {
@@ -108,17 +112,17 @@ async function buildForArchitecture(
         ...config,
         architecture,
         architectures: [architecture],
-        micropythonVersions: [micropythonVersion],
+        buildTargets: [target],
       },
       toolchainEnv,
       concurrentBuilds,
     });
     buildDir = buildResult.buildDir;
 
-    // Copy the built file to output directory with version and architecture suffix
+    // Copy the built file to output directory with mpy version and architecture suffix
     const ext = path.extname(buildResult.mpyFile);
     const baseName = path.basename(buildResult.mpyFile, ext);
-    const outputFileName = `${baseName}-mpy${mpyMajorMinor}-${architecture}${ext}`;
+    const outputFileName = `${baseName}-mpy${target.mpyVersion}-${architecture}${ext}`;
     const outputPath = path.join(outputDir, outputFileName);
 
     fs.copyFileSync(buildResult.mpyFile, outputPath);
@@ -131,7 +135,8 @@ async function buildForArchitecture(
 
     return {
       architecture,
-      micropythonVersion,
+      mpyVersion: target.mpyVersion,
+      micropythonVersion: target.micropythonVersion,
       mpyFile: outputPath,
       success: true,
     };
@@ -139,12 +144,11 @@ async function buildForArchitecture(
     // Clean up on error too
     cleanupBuildDir(buildDir);
     const errorMessage = error instanceof Error ? error.message : String(error);
-    core.error(
-      `Failed to build ${architecture} for MicroPython ${micropythonVersion}: ${errorMessage}`
-    );
+    core.error(`Failed to build ${architecture} for mpy ${target.mpyVersion}: ${errorMessage}`);
     return {
       architecture,
-      micropythonVersion,
+      mpyVersion: target.mpyVersion,
+      micropythonVersion: target.micropythonVersion,
       mpyFile: '',
       success: false,
       error: errorMessage,
@@ -158,7 +162,10 @@ async function run(): Promise<void> {
     core.info('Validating inputs...');
     const config = validateInputs();
     core.info(`Architecture: ${config.architecture}`);
-    core.info(`MicroPython versions: ${config.micropythonVersions.join(', ')}`);
+    core.info(`Build targets:`);
+    for (const target of config.buildTargets) {
+      core.info(`  - mpy ${target.mpyVersion} → ${target.micropythonVersion}`);
+    }
     core.info(`Source directory: ${config.sourceDir}`);
     core.info(
       `Parallel builds: ${config.parallelBuilds === 0 ? 'disabled (sequential)' : config.parallelBuilds}`
@@ -191,51 +198,48 @@ async function run(): Promise<void> {
     // Set toolchain cache hit output
     core.setOutput('toolchain-cache-hit', anyToolchainCacheHit.toString());
 
-    // 4. Phase 2: Build for each MicroPython version
+    // 4. Phase 2: Build for each MPY version target
     const allResults: BuildResult[] = [];
 
-    for (const micropythonVersion of config.micropythonVersions) {
+    for (const target of config.buildTargets) {
       core.info('');
       core.info('='.repeat(60));
-      core.info(`MicroPython ${micropythonVersion}`);
+      core.info(`MPY ${target.mpyVersion} (using ${target.micropythonVersion})`);
       core.info('='.repeat(60));
 
       // Setup MicroPython for this version
-      core.startGroup(`Setting up MicroPython ${micropythonVersion}`);
-      await setupMicroPython(micropythonVersion, config.micropythonRepo);
+      core.startGroup(`Setting up MicroPython ${target.micropythonVersion}`);
+      await setupMicroPython(target.micropythonVersion, config.micropythonRepo);
       core.endGroup();
 
-      // Get architectures for this version (may exclude rv32imc for older versions)
-      const architecturesForVersion = getArchitecturesForVersion(
+      // Get architectures for this target (may exclude rv32imc for older versions)
+      const architecturesForTarget = getArchitecturesForTarget(
         config.architectures,
-        micropythonVersion
+        target.mpyVersion
       );
 
-      if (architecturesForVersion.length < config.architectures.length) {
-        const skipped = config.architectures.filter((a) => !architecturesForVersion.includes(a));
+      if (architecturesForTarget.length < config.architectures.length) {
+        const skipped = config.architectures.filter((a) => !architecturesForTarget.includes(a));
         core.info(
-          `Skipping architectures not supported by ${micropythonVersion}: ${skipped.join(', ')}`
+          `Skipping architectures not supported by mpy ${target.mpyVersion}: ${skipped.join(', ')}`
         );
       }
 
       // Build for all architectures (parallel or sequential)
-      if (config.parallelBuilds > 0 && architecturesForVersion.length > 1) {
-        const effectiveConcurrency = Math.min(
-          config.parallelBuilds,
-          architecturesForVersion.length
-        );
+      if (config.parallelBuilds > 0 && architecturesForTarget.length > 1) {
+        const effectiveConcurrency = Math.min(config.parallelBuilds, architecturesForTarget.length);
         core.info(
-          `Building ${architecturesForVersion.length} architectures in parallel (max ${effectiveConcurrency} concurrent)...`
+          `Building ${architecturesForTarget.length} architectures in parallel (max ${effectiveConcurrency} concurrent)...`
         );
 
         const results = await parallelMap(
-          architecturesForVersion,
+          architecturesForTarget,
           config.parallelBuilds,
           async (architecture) => {
             const toolchainEnv = toolchainEnvs.get(architecture)!;
             return buildForArchitecture(
               architecture,
-              micropythonVersion,
+              target,
               config,
               toolchainEnv,
               outputDir,
@@ -247,13 +251,13 @@ async function run(): Promise<void> {
         allResults.push(...results);
       } else {
         // Sequential builds
-        core.info(`Building for architectures: ${architecturesForVersion.join(', ')}`);
+        core.info(`Building for architectures: ${architecturesForTarget.join(', ')}`);
 
-        for (const architecture of architecturesForVersion) {
+        for (const architecture of architecturesForTarget) {
           const toolchainEnv = toolchainEnvs.get(architecture)!;
           const result = await buildForArchitecture(
             architecture,
-            micropythonVersion,
+            target,
             config,
             toolchainEnv,
             outputDir,
@@ -286,20 +290,21 @@ async function run(): Promise<void> {
       core.info('');
       core.warning('Failed builds:');
       for (const r of failed) {
-        core.warning(`  - ${r.architecture} (mpy ${r.micropythonVersion}): ${r.error}`);
+        core.warning(`  - ${r.architecture} (mpy ${r.mpyVersion}): ${r.error}`);
       }
     }
 
     // 6. Set outputs
     const mpyFiles = successful.map((r) => r.mpyFile);
     const architecturesBuilt = [...new Set(successful.map((r) => r.architecture))];
-    const versionsBuilt = [...new Set(successful.map((r) => r.micropythonVersion))];
+    const mpyVersionsBuilt = [...new Set(successful.map((r) => r.mpyVersion))];
+    const micropythonVersionsBuilt = [...new Set(successful.map((r) => r.micropythonVersion))];
 
-    // For single architecture + single version, output the single file path
+    // For single architecture + single target, output the single file path
     // Otherwise, output the directory
     if (
       config.architectures.length === 1 &&
-      config.micropythonVersions.length === 1 &&
+      config.buildTargets.length === 1 &&
       successful.length === 1
     ) {
       core.setOutput('mpy-file', successful[0].mpyFile);
@@ -312,12 +317,13 @@ async function run(): Promise<void> {
     core.setOutput('mpy-dir', process.env.MPY_DIR || '');
     core.setOutput('architecture', config.architecture);
     core.setOutput('architectures', JSON.stringify(architecturesBuilt));
-    core.setOutput('micropython-versions', JSON.stringify(versionsBuilt));
+    core.setOutput('mpy-versions', JSON.stringify(mpyVersionsBuilt));
+    core.setOutput('micropython-versions', JSON.stringify(micropythonVersionsBuilt));
 
     // Fail if any builds failed
     if (failed.length > 0) {
       core.setFailed(
-        `${failed.length} build(s) failed: ${failed.map((r) => `${r.architecture}@${r.micropythonVersion}`).join(', ')}`
+        `${failed.length} build(s) failed: ${failed.map((r) => `${r.architecture}@mpy${r.mpyVersion}`).join(', ')}`
       );
     }
   } catch (error) {

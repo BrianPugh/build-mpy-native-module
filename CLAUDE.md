@@ -39,6 +39,7 @@ The action uses `@vercel/ncc` to bundle TypeScript into single JavaScript files:
 - `src/index.ts` - Main entry point, orchestrates build flow
 - `src/post.ts` - Post-step for saving caches
 - `src/types.ts` - TypeScript interfaces, `VALID_ARCHITECTURES` constant
+- `src/mpy-versions.ts` - MPY subversion to MicroPython version mapping
 - `src/validation.ts` - Input validation logic
 - `src/micropython.ts` - MicroPython setup (clone, build mpy-cross)
 - `src/build/` - Make execution and workarounds
@@ -166,3 +167,25 @@ With 4 parallel builds and 8 CPUs, each make uses `-j2`, for 8 total processes.
 **Why:** Since toolchains now install to `~/.mpy-toolchains/`, the parent directory may not exist on a fresh runner. Each toolchain's `setup()` method now calls `fs.mkdirSync(parentDir, { recursive: true })` before cloning/extracting.
 
 **Do not:** Remove these `mkdirSync` calls - they're required for the new path structure.
+
+### 10. MPY Subversion-Based Input Instead of MicroPython Version
+
+**File:** `src/mpy-versions.ts`, `src/validation.ts`
+
+**Why:** Users care about MPY file compatibility (subversion 6.3, 6.2, etc.), not MicroPython version numbers. The MPY subversion determines which devices can run the compiled module. By specifying `mpy-version: 6.3` instead of `micropython-version: v1.27.0`:
+
+1. Users don't need to know the MicroPython→MPY version mapping
+2. Output filenames (`module-mpy6.3-armv6m.mpy`) clearly indicate compatibility
+3. The action automatically uses the most recent MicroPython version for each subversion, ensuring latest bugfixes/optimizations
+4. Updating the recommended MicroPython version (e.g., when v1.28.0 releases) only requires updating `MPY_VERSION_MAP`
+
+**Mapping (src/mpy-versions.ts):**
+```typescript
+'6.3': 'v1.27.0',  // v1.23.0+
+'6.2': 'v1.22.2',  // v1.22.x
+'6.1': 'v1.21.0',  // v1.20-v1.21.0
+'6':   'v1.19.1',  // v1.19.x
+'5':   'v1.18',    // v1.12-v1.18
+```
+
+**Do not:** Revert to `micropython-version` as the primary input. The `micropython-version` input exists for power users who need a specific version, but `mpy-version` should be the default approach.

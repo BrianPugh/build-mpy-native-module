@@ -79,13 +79,3 @@ export async function setupMicroPython(
   const mpyCrossBinDir = path.dirname(MPY_CROSS_PATH);
   core.addPath(mpyCrossBinDir);
 }
-
-export function getMicroPythonMajorMinor(version: string): string {
-  // Extract major.minor from version string like "v1.22.2" or "1.22.2"
-  const normalized = version.replace(/^v/, '');
-  const parts = normalized.split('.');
-  if (parts.length >= 2) {
-    return `${parts[0]}.${parts[1]}`;
-  }
-  return normalized;
-}

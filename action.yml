@@ -11,9 +11,15 @@ inputs:
     required: false
     default: 'all'
 
+  mpy-version:
+    description: 'MPY subversion(s) to build - single value, comma-separated list, or "all". Valid: 6.3, 6.2, 6.1, 6, 5. Default: 6.3'
+    required: false
+    default: ''
+
   micropython-version:
-    description: 'MicroPython version(s) - single version or comma-separated list'
-    required: true
+    description: 'Advanced: Override MicroPython version directly instead of using mpy-version. Mutually exclusive with mpy-version.'
+    required: false
+    default: ''
 
   source-dir:
     description: 'Directory containing the native module source code and Makefile'
@@ -99,8 +105,11 @@ outputs:
   architectures:
     description: 'JSON array of architectures that were successfully built'
 
+  mpy-versions:
+    description: 'JSON array of MPY subversions that were successfully built'
+
   micropython-versions:
-    description: 'JSON array of MicroPython versions that were successfully built'
+    description: 'JSON array of MicroPython versions that were used for building'
 
   toolchain-cache-hit:
     description: 'Whether the toolchain cache was hit (true/false, for xtensa/xtensawin)'

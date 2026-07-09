@@ -58,25 +58,26 @@ jobs:
           repository: BrianPugh/micropython-fnv1a32
           path: fnv1a32
 
-      - name: Build fnv1a32 for all architectures and versions
+      - name: Build fnv1a32 for all architectures and mpy versions
         uses: ./
         id: build
         with:
           # All 9 architectures
-          # rv32imc is auto-filtered for v1.24.1 (requires >= 1.25.0)
+          # rv32imc is auto-filtered for mpy 6.2 (requires 6.3+)
           architecture: all
-          micropython-version: v1.24.1, v1.25.0
+          mpy-version: 6.2, 6.3
           source-dir: fnv1a32
 
       - name: Verify outputs
         run: |
           echo "output-dir: ${{ steps.build.outputs.output-dir }}"
           echo "architectures: ${{ steps.build.outputs.architectures }}"
+          echo "mpy-versions: ${{ steps.build.outputs.mpy-versions }}"
           echo "micropython-versions: ${{ steps.build.outputs.micropython-versions }}"
           echo "mpy-files: ${{ steps.build.outputs.mpy-files }}"
           ls -la "${{ steps.build.outputs.output-dir }}"
-          # v1.24.1: 8 architectures (rv32imc filtered out)
-          # v1.25.0: 9 architectures (all including rv32imc)
+          # mpy 6.2: 8 architectures (rv32imc filtered out)
+          # mpy 6.3: 9 architectures (all including rv32imc)
           # Total: 17 files
           count=$(ls -1 "${{ steps.build.outputs.output-dir }}"/*.mpy | wc -l)
           echo "Built $count .mpy files"

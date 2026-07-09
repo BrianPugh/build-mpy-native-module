@@ -43018,8 +43018,13 @@ const cache_1 = __nccwpck_require__(93930);
 const micropython_1 = __nccwpck_require__(14481);
 const build_1 = __nccwpck_require__(62028);
 const utils_1 = __nccwpck_require__(71798);
-function getArchitecturesForVersion(requestedArchitectures, micropythonVersion) {
-    if (!(0, validation_1.supportsRv32imc)(micropythonVersion)) {
+const mpy_versions_1 = __nccwpck_require__(87933);
+/**
+ * Get architectures supported for a specific MPY version.
+ * rv32imc is only available for mpy 6.3+
+ */
+function getArchitecturesForTarget(requestedArchitectures, mpyVersion) {
+    if (!(0, mpy_versions_1.mpyVersionSupportsRv32imc)(mpyVersion)) {
         return requestedArchitectures.filter((a) => a !== 'rv32imc');
     }
     return requestedArchitectures;
@@ -43069,9 +43074,8 @@ async function setupToolchain(architecture, config) {
 /**
  * Build for a single architecture using the provided toolchain environment.
  */
-async function buildForArchitecture(architecture, micropythonVersion, config, toolchainEnv, outputDir, concurrentBuilds = 1) {
-    const mpyMajorMinor = (0, micropython_1.getMicroPythonMajorMinor)(micropythonVersion);
-    core.info(`Building: ${architecture} / MicroPython ${micropythonVersion}`);
+async function buildForArchitecture(architecture, target, config, toolchainEnv, outputDir, concurrentBuilds = 1) {
+    core.info(`Building: ${architecture} / mpy ${target.mpyVersion} (${target.micropythonVersion})`);
     let buildDir;
     try {
         const buildResult = await (0, build_1.runMake)({
@@ -43079,16 +43083,16 @@ async function buildForArchitecture(architecture, micropythonVersion, config, to
                 ...config,
                 architecture,
                 architectures: [architecture],
-                micropythonVersions: [micropythonVersion],
+                buildTargets: [target],
             },
             toolchainEnv,
             concurrentBuilds,
         });
         buildDir = buildResult.buildDir;
-        // Copy the built file to output directory with version and architecture suffix
+        // Copy the built file to output directory with mpy version and architecture suffix
         const ext = path.extname(buildResult.mpyFile);
         const baseName = path.basename(buildResult.mpyFile, ext);
-        const outputFileName = `${baseName}-mpy${mpyMajorMinor}-${architecture}${ext}`;
+        const outputFileName = `${baseName}-mpy${target.mpyVersion}-${architecture}${ext}`;
         const outputPath = path.join(outputDir, outputFileName);
         fs.copyFileSync(buildResult.mpyFile, outputPath);
         const hash = crypto.createHash('sha256').update(fs.readFileSync(outputPath)).digest('hex');
@@ -43098,7 +43102,8 @@ async function buildForArchitecture(architecture, micropythonVersion, config, to
         (0, build_1.cleanupBuildDir)(buildDir);
         return {
             architecture,
-            micropythonVersion,
+            mpyVersion: target.mpyVersion,
+            micropythonVersion: target.micropythonVersion,
             mpyFile: outputPath,
             success: true,
         };
@@ -43107,10 +43112,11 @@ async function buildForArchitecture(architecture, micropythonVersion, config, to
         // Clean up on error too
         (0, build_1.cleanupBuildDir)(buildDir);
         const errorMessage = error instanceof Error ? error.message : String(error);
-        core.error(`Failed to build ${architecture} for MicroPython ${micropythonVersion}: ${errorMessage}`);
+        core.error(`Failed to build ${architecture} for mpy ${target.mpyVersion}: ${errorMessage}`);
         return {
             architecture,
-            micropythonVersion,
+            mpyVersion: target.mpyVersion,
+            micropythonVersion: target.micropythonVersion,
             mpyFile: '',
             success: false,
             error: errorMessage,
@@ -43123,7 +43129,10 @@ async function run() {
         core.info('Validating inputs...');
         const config = (0, validation_1.validateInputs)();
         core.info(`Architecture: ${config.architecture}`);
-        core.info(`MicroPython versions: ${config.micropythonVersions.join(', ')}`);
+        core.info(`Build targets:`);
+        for (const target of config.buildTargets) {
+            core.info(`  - mpy ${target.mpyVersion} → ${target.micropythonVersion}`);
+        }
         core.info(`Source directory: ${config.sourceDir}`);
         core.info(`Parallel builds: ${config.parallelBuilds === 0 ? 'disabled (sequential)' : config.parallelBuilds}`);
         if (config.staticConstWorkaround) {
@@ -43149,39 +43158,39 @@ async function run() {
         core.endGroup();
         // Set toolchain cache hit output
         core.setOutput('toolchain-cache-hit', anyToolchainCacheHit.toString());
-        // 4. Phase 2: Build for each MicroPython version
+        // 4. Phase 2: Build for each MPY version target
         const allResults = [];
-        for (const micropythonVersion of config.micropythonVersions) {
+        for (const target of config.buildTargets) {
             core.info('');
             core.info('='.repeat(60));
-            core.info(`MicroPython ${micropythonVersion}`);
+            core.info(`MPY ${target.mpyVersion} (using ${target.micropythonVersion})`);
             core.info('='.repeat(60));
             // Setup MicroPython for this version
-            core.startGroup(`Setting up MicroPython ${micropythonVersion}`);
-            await (0, micropython_1.setupMicroPython)(micropythonVersion, config.micropythonRepo);
+            core.startGroup(`Setting up MicroPython ${target.micropythonVersion}`);
+            await (0, micropython_1.setupMicroPython)(target.micropythonVersion, config.micropythonRepo);
             core.endGroup();
-            // Get architectures for this version (may exclude rv32imc for older versions)
-            const architecturesForVersion = getArchitecturesForVersion(config.architectures, micropythonVersion);
-            if (architecturesForVersion.length < config.architectures.length) {
-                const skipped = config.architectures.filter((a) => !architecturesForVersion.includes(a));
-                core.info(`Skipping architectures not supported by ${micropythonVersion}: ${skipped.join(', ')}`);
+            // Get architectures for this target (may exclude rv32imc for older versions)
+            const architecturesForTarget = getArchitecturesForTarget(config.architectures, target.mpyVersion);
+            if (architecturesForTarget.length < config.architectures.length) {
+                const skipped = config.architectures.filter((a) => !architecturesForTarget.includes(a));
+                core.info(`Skipping architectures not supported by mpy ${target.mpyVersion}: ${skipped.join(', ')}`);
             }
             // Build for all architectures (parallel or sequential)
-            if (config.parallelBuilds > 0 && architecturesForVersion.length > 1) {
-                const effectiveConcurrency = Math.min(config.parallelBuilds, architecturesForVersion.length);
-                core.info(`Building ${architecturesForVersion.length} architectures in parallel (max ${effectiveConcurrency} concurrent)...`);
-                const results = await (0, utils_1.parallelMap)(architecturesForVersion, config.parallelBuilds, async (architecture) => {
+            if (config.parallelBuilds > 0 && architecturesForTarget.length > 1) {
+                const effectiveConcurrency = Math.min(config.parallelBuilds, architecturesForTarget.length);
+                core.info(`Building ${architecturesForTarget.length} architectures in parallel (max ${effectiveConcurrency} concurrent)...`);
+                const results = await (0, utils_1.parallelMap)(architecturesForTarget, config.parallelBuilds, async (architecture) => {
                     const toolchainEnv = toolchainEnvs.get(architecture);
-                    return buildForArchitecture(architecture, micropythonVersion, config, toolchainEnv, outputDir, effectiveConcurrency);
+                    return buildForArchitecture(architecture, target, config, toolchainEnv, outputDir, effectiveConcurrency);
                 });
                 allResults.push(...results);
             }
             else {
                 // Sequential builds
-                core.info(`Building for architectures: ${architecturesForVersion.join(', ')}`);
-                for (const architecture of architecturesForVersion) {
+                core.info(`Building for architectures: ${architecturesForTarget.join(', ')}`);
+                for (const architecture of architecturesForTarget) {
                     const toolchainEnv = toolchainEnvs.get(architecture);
-                    const result = await buildForArchitecture(architecture, micropythonVersion, config, toolchainEnv, outputDir, 1 // Sequential, one build at a time
+                    const result = await buildForArchitecture(architecture, target, config, toolchainEnv, outputDir, 1 // Sequential, one build at a time
                     );
                     allResults.push(result);
                 }
@@ -43206,17 +43215,18 @@ async function run() {
             core.info('');
             core.warning('Failed builds:');
             for (const r of failed) {
-                core.warning(`  - ${r.architecture} (mpy ${r.micropythonVersion}): ${r.error}`);
+                core.warning(`  - ${r.architecture} (mpy ${r.mpyVersion}): ${r.error}`);
             }
         }
         // 6. Set outputs
         const mpyFiles = successful.map((r) => r.mpyFile);
         const architecturesBuilt = [...new Set(successful.map((r) => r.architecture))];
-        const versionsBuilt = [...new Set(successful.map((r) => r.micropythonVersion))];
-        // For single architecture + single version, output the single file path
+        const mpyVersionsBuilt = [...new Set(successful.map((r) => r.mpyVersion))];
+        const micropythonVersionsBuilt = [...new Set(successful.map((r) => r.micropythonVersion))];
+        // For single architecture + single target, output the single file path
         // Otherwise, output the directory
         if (config.architectures.length === 1 &&
-            config.micropythonVersions.length === 1 &&
+            config.buildTargets.length === 1 &&
             successful.length === 1) {
             core.setOutput('mpy-file', successful[0].mpyFile);
         }
@@ -43228,10 +43238,11 @@ async function run() {
         core.setOutput('mpy-dir', process.env.MPY_DIR || '');
         core.setOutput('architecture', config.architecture);
         core.setOutput('architectures', JSON.stringify(architecturesBuilt));
-        core.setOutput('micropython-versions', JSON.stringify(versionsBuilt));
+        core.setOutput('mpy-versions', JSON.stringify(mpyVersionsBuilt));
+        core.setOutput('micropython-versions', JSON.stringify(micropythonVersionsBuilt));
         // Fail if any builds failed
         if (failed.length > 0) {
-            core.setFailed(`${failed.length} build(s) failed: ${failed.map((r) => `${r.architecture}@${r.micropythonVersion}`).join(', ')}`);
+            core.setFailed(`${failed.length} build(s) failed: ${failed.map((r) => `${r.architecture}@mpy${r.mpyVersion}`).join(', ')}`);
         }
     }
     catch (error) {
@@ -43294,7 +43305,6 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.setupMicroPython = setupMicroPython;
-exports.getMicroPythonMajorMinor = getMicroPythonMajorMinor;
 const core = __importStar(__nccwpck_require__(37484));
 const exec = __importStar(__nccwpck_require__(95236));
 const cache = __importStar(__nccwpck_require__(5116));
@@ -43363,14 +43373,72 @@ async function setupMicroPython(version, repository = 'https://github.com/microp
     const mpyCrossBinDir = path.dirname(constants_1.MPY_CROSS_PATH);
     core.addPath(mpyCrossBinDir);
 }
-function getMicroPythonMajorMinor(version) {
-    // Extract major.minor from version string like "v1.22.2" or "1.22.2"
-    const normalized = version.replace(/^v/, '');
-    const parts = normalized.split('.');
-    if (parts.length >= 2) {
-        return `${parts[0]}.${parts[1]}`;
-    }
-    return normalized;
+
+
+/***/ }),
+
+/***/ 87933:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Mapping of MPY subversions to recommended MicroPython versions.
+ *
+ * Users should build using the most recent MicroPython version that produces
+ * each MPY subversion, as newer versions contain bugfixes and optimizations.
+ *
+ * See: https://docs.micropython.org/en/latest/reference/mpyfiles.html#versioning-and-compatibility-of-mpy-files
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.MPY_VERSIONS_WITH_RV32IMC = exports.VALID_MPY_VERSIONS = exports.MPY_VERSION_MAP = void 0;
+exports.getMicroPythonVersionForMpy = getMicroPythonVersionForMpy;
+exports.mpyVersionSupportsRv32imc = mpyVersionSupportsRv32imc;
+exports.micropythonVersionSupportsRv32imc = micropythonVersionSupportsRv32imc;
+/**
+ * MPY subversion to recommended MicroPython version mapping.
+ *
+ * | MPY Version | MicroPython Range | Recommended |
+ * |-------------|-------------------|-------------|
+ * | 6.3         | v1.23.0+          | v1.27.0     |
+ * | 6.2         | v1.22.x           | v1.22.2     |
+ * | 6.1         | v1.20-v1.21.0     | v1.21.0     |
+ * | 6           | v1.19.x           | v1.19.1     |
+ * | 5           | v1.12-v1.18       | v1.18       |
+ */
+exports.MPY_VERSION_MAP = {
+    '6.3': 'v1.27.0',
+    '6.2': 'v1.22.2',
+    '6.1': 'v1.21.0',
+    '6': 'v1.19.1',
+    '5': 'v1.18',
+};
+exports.VALID_MPY_VERSIONS = ['6.3', '6.2', '6.1', '6', '5'];
+/**
+ * MPY subversions that support rv32imc architecture.
+ * rv32imc requires MicroPython >= 1.25.0
+ */
+exports.MPY_VERSIONS_WITH_RV32IMC = ['6.3'];
+/**
+ * Get the recommended MicroPython version for an MPY subversion.
+ */
+function getMicroPythonVersionForMpy(mpyVersion) {
+    return exports.MPY_VERSION_MAP[mpyVersion];
+}
+/**
+ * Check if an MPY version supports rv32imc architecture.
+ */
+function mpyVersionSupportsRv32imc(mpyVersion) {
+    return exports.MPY_VERSIONS_WITH_RV32IMC.includes(mpyVersion);
+}
+/**
+ * Check if a raw MicroPython version supports rv32imc architecture.
+ * rv32imc requires MicroPython >= 1.25.0
+ */
+function micropythonVersionSupportsRv32imc(micropythonVersion) {
+    const normalizedVersion = micropythonVersion.replace(/^v/, '').split('-')[0];
+    const [major, minor] = normalizedVersion.split('.').map(Number);
+    return major > 1 || (major === 1 && minor >= 25);
 }
 
 
@@ -44434,13 +44502,13 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ValidationError = void 0;
-exports.supportsRv32imc = supportsRv32imc;
-exports.resolveArchitectures = resolveArchitectures;
+exports.resolveArchitecturesForMpy = resolveArchitecturesForMpy;
 exports.validateInputs = validateInputs;
 const core = __importStar(__nccwpck_require__(37484));
 const fs = __importStar(__nccwpck_require__(79896));
 const path = __importStar(__nccwpck_require__(16928));
 const types_1 = __nccwpck_require__(38522);
+const mpy_versions_1 = __nccwpck_require__(87933);
 class ValidationError extends Error {
     constructor(message) {
         super(message);
@@ -44448,22 +44516,44 @@ class ValidationError extends Error {
     }
 }
 exports.ValidationError = ValidationError;
-function supportsRv32imc(micropythonVersion) {
-    // Remove 'v' prefix and pre-release suffix (e.g., v1.25.0-preview.1 -> 1.25.0)
-    const normalizedVersion = micropythonVersion.replace(/^v/, '').split('-')[0];
-    const [major, minor] = normalizedVersion.split('.').map(Number);
-    return major > 1 || (major === 1 && minor >= 25);
-}
-function resolveArchitectures(architecture, micropythonVersion) {
+/**
+ * Resolve architectures for a given MPY version.
+ * rv32imc is only supported on mpy 6.3+ (MicroPython >= 1.25.0)
+ */
+function resolveArchitecturesForMpy(architecture, mpyVersion) {
     if (architecture === 'all') {
-        // Build all architectures, excluding rv32imc if MicroPython < 1.25.0
         const archs = [...types_1.SINGLE_ARCHITECTURES];
-        if (!supportsRv32imc(micropythonVersion)) {
+        if (!(0, mpy_versions_1.mpyVersionSupportsRv32imc)(mpyVersion)) {
             return archs.filter((a) => a !== 'rv32imc');
         }
         return archs;
     }
     return [architecture];
+}
+/**
+ * Derive MPY version from a MicroPython version string.
+ * Used when user specifies raw micropython-version.
+ * Throws ValidationError for versions older than v1.12 (mpy < 5).
+ */
+function deriveMpyVersionFromMicropython(micropythonVersion) {
+    const normalized = micropythonVersion.replace(/^v/, '').split('-')[0];
+    const [major, minor] = normalized.split('.').map(Number);
+    if (major !== 1) {
+        // Future-proof: assume mpy 6.3+ for major > 1
+        return '6.3';
+    }
+    if (minor >= 23)
+        return '6.3';
+    if (minor === 22)
+        return '6.2';
+    if (minor >= 20 && minor <= 21)
+        return '6.1';
+    if (minor === 19)
+        return '6';
+    if (minor >= 12 && minor <= 18)
+        return '5';
+    // Versions older than v1.12 are not supported
+    throw new ValidationError(`MicroPython ${micropythonVersion} is too old. This action requires MicroPython >= v1.12 (mpy version 5+).`);
 }
 function validateInputs() {
     // Architecture (optional, defaults to 'all')
@@ -44471,61 +44561,86 @@ function validateInputs() {
     if (!types_1.VALID_ARCHITECTURES.includes(architecture)) {
         throw new ValidationError(`Invalid architecture "${architecture}". Valid options: ${types_1.VALID_ARCHITECTURES.join(', ')}`);
     }
-    // MicroPython version(s) (required) - single value or comma-separated list
-    const micropythonVersionInput = core.getInput('micropython-version', {
-        required: true,
-    });
-    const micropythonVersions = micropythonVersionInput
-        .split(',')
-        .map((v) => v.trim())
-        .filter(Boolean);
-    if (micropythonVersions.length === 0) {
-        throw new ValidationError('micropython-version is required');
+    // Parse mpy-version input
+    const mpyVersionInput = core.getInput('mpy-version') || '';
+    const micropythonVersionInput = core.getInput('micropython-version') || '';
+    // Check for mutually exclusive inputs
+    if (mpyVersionInput && micropythonVersionInput) {
+        throw new ValidationError('Cannot specify both mpy-version and micropython-version. Use one or the other.');
     }
-    // Validate each version format (supports pre-release versions like v1.25.0-preview.1)
-    for (const version of micropythonVersions) {
-        if (!version.match(/^v?\d+\.\d+\.\d+(-[\w.]+)?$/)) {
-            throw new ValidationError(`Invalid micropython-version format "${version}". Expected format: v1.22.2, 1.22.2, or v1.25.0-preview.1`);
+    // Determine build targets
+    const buildTargets = [];
+    if (micropythonVersionInput) {
+        // Power user mode: using raw micropython-version
+        const micropythonVersions = micropythonVersionInput
+            .split(',')
+            .map((v) => v.trim())
+            .filter(Boolean);
+        // Validate each version format
+        for (const version of micropythonVersions) {
+            if (!version.match(/^v?\d+\.\d+\.\d+(-[\w.]+)?$/)) {
+                throw new ValidationError(`Invalid micropython-version format "${version}". Expected format: v1.22.2, 1.22.2, or v1.25.0-preview.1`);
+            }
+        }
+        // Create build targets from raw versions
+        for (const version of micropythonVersions) {
+            const normalizedVersion = version.startsWith('v') ? version : `v${version}`;
+            const mpyVersion = deriveMpyVersionFromMicropython(normalizedVersion);
+            buildTargets.push({
+                mpyVersion,
+                micropythonVersion: normalizedVersion,
+            });
         }
     }
-    // rv32imc requires MicroPython >= 1.25.0 (only check for single arch)
+    else {
+        // Normal mode: using mpy-version (default: 6.3)
+        const mpyVersions = (mpyVersionInput || '6.3')
+            .split(',')
+            .map((v) => v.trim())
+            .filter(Boolean);
+        // Handle 'all' special value
+        const resolvedMpyVersions = [];
+        for (const v of mpyVersions) {
+            if (v === 'all') {
+                resolvedMpyVersions.push(...mpy_versions_1.VALID_MPY_VERSIONS);
+            }
+            else if (mpy_versions_1.VALID_MPY_VERSIONS.includes(v)) {
+                resolvedMpyVersions.push(v);
+            }
+            else {
+                throw new ValidationError(`Invalid mpy-version "${v}". Valid options: ${mpy_versions_1.VALID_MPY_VERSIONS.join(', ')}, all`);
+            }
+        }
+        // Remove duplicates and create build targets
+        const uniqueMpyVersions = [...new Set(resolvedMpyVersions)];
+        for (const mpyVersion of uniqueMpyVersions) {
+            buildTargets.push({
+                mpyVersion,
+                micropythonVersion: mpy_versions_1.MPY_VERSION_MAP[mpyVersion],
+            });
+        }
+    }
+    if (buildTargets.length === 0) {
+        throw new ValidationError('No build targets specified');
+    }
+    // rv32imc validation - check if any build target doesn't support it
     if (architecture === 'rv32imc') {
-        for (const version of micropythonVersions) {
-            if (!supportsRv32imc(version)) {
-                throw new ValidationError(`Architecture rv32imc requires MicroPython >= 1.25.0, got ${version}`);
+        for (const target of buildTargets) {
+            if (!(0, mpy_versions_1.mpyVersionSupportsRv32imc)(target.mpyVersion)) {
+                throw new ValidationError(`Architecture rv32imc requires mpy 6.3+ (MicroPython >= 1.25.0), but mpy ${target.mpyVersion} was requested`);
             }
         }
     }
-    // Resolve the list of architectures to build (use lowest version for exclusions)
-    // Sort versions and use the lowest to determine architecture compatibility
-    const sortedVersions = [...micropythonVersions].sort((a, b) => {
-        // Remove 'v' prefix and split off pre-release suffix
-        const parseVersion = (v) => {
-            const normalized = v.replace(/^v/, '');
-            const [versionPart, prerelease] = normalized.split('-');
-            const [major, minor, patch] = versionPart.split('.').map(Number);
-            return { major, minor, patch, prerelease };
-        };
-        const av = parseVersion(a);
-        const bv = parseVersion(b);
-        if (av.major !== bv.major)
-            return av.major - bv.major;
-        if (av.minor !== bv.minor)
-            return av.minor - bv.minor;
-        if (av.patch !== bv.patch)
-            return av.patch - bv.patch;
-        // Pre-release versions sort before release versions (e.g., 1.25.0-preview < 1.25.0)
-        if (av.prerelease && !bv.prerelease)
-            return -1;
-        if (!av.prerelease && bv.prerelease)
-            return 1;
-        // Both have prerelease, compare alphabetically
-        if (av.prerelease && bv.prerelease)
-            return av.prerelease.localeCompare(bv.prerelease);
-        return 0;
+    // Resolve the list of architectures to build
+    // Use the highest mpy version to determine the max architecture set
+    const sortedTargets = [...buildTargets].sort((a, b) => {
+        // Sort by mpy version descending (6.3 > 6.2 > 6.1 > 6 > 5)
+        const aNum = parseFloat(a.mpyVersion);
+        const bNum = parseFloat(b.mpyVersion);
+        return bNum - aNum;
     });
-    const highestVersion = sortedVersions[sortedVersions.length - 1];
-    const architectures = resolveArchitectures(architecture, highestVersion);
+    const highestMpyVersion = sortedTargets[0].mpyVersion;
+    const architectures = resolveArchitecturesForMpy(architecture, highestMpyVersion);
     // Source directory
     const sourceDir = path.resolve(core.getInput('source-dir') || '.');
     if (!fs.existsSync(sourceDir)) {
@@ -44564,7 +44679,7 @@ function validateInputs() {
     return {
         architecture: architecture,
         architectures,
-        micropythonVersions,
+        buildTargets,
         micropythonRepo,
         sourceDir,
         outputName,
