@@ -48358,12 +48358,47 @@ const fs = __importStar(__nccwpck_require__(79896));
 const os = __importStar(__nccwpck_require__(70857));
 const constants_1 = __nccwpck_require__(27242);
 const utils_1 = __nccwpck_require__(71798);
+const mpy_versions_1 = __nccwpck_require__(87933);
+/**
+ * Resolve a named ref (branch or tag) to its commit SHA on the remote.
+ * Returns null if the remote has no such ref (e.g. the ref is a bare SHA).
+ */
+async function resolveRemoteRef(repository, ref) {
+    try {
+        const output = await exec.getExecOutput('git', ['ls-remote', '--', repository, ref], {
+            silent: true,
+        });
+        const sha = output.stdout.trim().split('\n')[0]?.split(/\s+/)[0];
+        return sha || null;
+    }
+    catch {
+        return null;
+    }
+}
 async function setupMicroPython(version, repository = 'https://github.com/micropython/micropython') {
     core.info(`Setting up MicroPython ${version}...`);
-    // Normalize version (ensure it starts with 'v')
-    const normalizedVersion = version.startsWith('v') ? version : `v${version}`;
+    // Release versions are normalized to their tag name (v-prefixed); anything
+    // else is a git ref (branch or commit SHA) used verbatim.
+    const isRelease = (0, mpy_versions_1.isMicropythonReleaseVersion)(version);
+    const gitRef = isRelease && !version.startsWith('v') ? `v${version}` : version;
+    // Release tags are immutable, so they can key the cache directly. Branches
+    // move, so resolve them to a commit SHA first; if the remote has no such
+    // named ref, assume the ref itself is a bare commit SHA.
+    let cacheId = gitRef;
+    let isNamedRef = true;
+    if (!isRelease) {
+        const resolvedSha = await resolveRemoteRef(repository, gitRef);
+        if (resolvedSha) {
+            cacheId = resolvedSha;
+            core.info(`Resolved ref "${gitRef}" to ${resolvedSha}`);
+        }
+        else {
+            isNamedRef = false;
+            core.info(`"${gitRef}" is not a named ref on the remote; treating it as a commit SHA`);
+        }
+    }
     // Try to restore from cache
-    const cacheKey = `micropython-${constants_1.CACHE_VERSION}-${normalizedVersion}`;
+    const cacheKey = `micropython-${constants_1.CACHE_VERSION}-${cacheId}`;
     const cachePaths = [constants_1.MPY_DIR];
     let cacheHit = false;
     try {
@@ -48378,19 +48413,29 @@ async function setupMicroPython(version, repository = 'https://github.com/microp
     }
     if (!cacheHit || !fs.existsSync(constants_1.MPY_CROSS_PATH)) {
         // Clone MicroPython repository (with retry for transient network failures)
-        core.info(`Cloning MicroPython ${normalizedVersion}...`);
+        core.info(`Cloning MicroPython ${gitRef}...`);
         if (fs.existsSync(constants_1.MPY_DIR)) {
             await exec.exec('rm', ['-rf', constants_1.MPY_DIR]);
         }
-        await (0, utils_1.execWithRetry)('git', [
-            'clone',
-            '--depth',
-            '1',
-            '--branch',
-            normalizedVersion,
-            repository,
-            constants_1.MPY_DIR,
-        ]);
+        if (isNamedRef) {
+            // Tags and branches can be cloned shallowly
+            await (0, utils_1.execWithRetry)('git', [
+                'clone',
+                '--depth',
+                '1',
+                '--branch',
+                gitRef,
+                repository,
+                constants_1.MPY_DIR,
+            ]);
+        }
+        else {
+            // A bare commit SHA cannot be passed to --branch; full clone, then checkout
+            await (0, utils_1.execWithRetry)('git', ['clone', repository, constants_1.MPY_DIR]);
+            await exec.exec('git', ['-c', 'advice.detachedHead=false', 'checkout', gitRef], {
+                cwd: constants_1.MPY_DIR,
+            });
+        }
         // Build mpy-cross
         core.info('Building mpy-cross...');
         const numCpus = os.cpus().length;
@@ -48436,10 +48481,11 @@ async function setupMicroPython(version, repository = 'https://github.com/microp
  * See: https://docs.micropython.org/en/latest/reference/mpyfiles.html#versioning-and-compatibility-of-mpy-files
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.MPY_VERSIONS_WITH_RV32IMC = exports.VALID_MPY_VERSIONS = exports.MPY_VERSION_MAP = void 0;
+exports.MICROPYTHON_VERSION_REGEX = exports.MPY_VERSIONS_WITH_RV32IMC = exports.VALID_MPY_VERSIONS = exports.MPY_VERSION_MAP = void 0;
 exports.getMicroPythonVersionForMpy = getMicroPythonVersionForMpy;
 exports.mpyVersionSupportsRv32imc = mpyVersionSupportsRv32imc;
 exports.micropythonVersionSupportsRv32imc = micropythonVersionSupportsRv32imc;
+exports.isMicropythonReleaseVersion = isMicropythonReleaseVersion;
 exports.targetSupportsRv32imc = targetSupportsRv32imc;
 /**
  * MPY subversion to recommended MicroPython version mapping.
@@ -48487,14 +48533,30 @@ function micropythonVersionSupportsRv32imc(micropythonVersion) {
     return major > 1 || (major === 1 && minor >= 25);
 }
 /**
+ * Matches MicroPython release versions like v1.22.2, 1.22.2, or
+ * v1.25.0-preview.1. Anything else passed as micropython-version is treated
+ * as a git ref (branch or commit SHA).
+ */
+exports.MICROPYTHON_VERSION_REGEX = /^v?\d+\.\d+\.\d+(-[\w.]+)?$/;
+function isMicropythonReleaseVersion(version) {
+    return exports.MICROPYTHON_VERSION_REGEX.test(version);
+}
+/**
  * Check if a build target supports rv32imc architecture.
  * Both checks are needed: mpy 6.3 spans MicroPython v1.23.0+, but rv32imc
  * only exists in MicroPython >= 1.25.0, so a raw micropython-version of
  * v1.23.x/v1.24.x derives mpy 6.3 yet cannot build rv32imc.
  */
 function targetSupportsRv32imc(target) {
-    return (mpyVersionSupportsRv32imc(target.mpyVersion) &&
-        micropythonVersionSupportsRv32imc(target.micropythonVersion));
+    if (!mpyVersionSupportsRv32imc(target.mpyVersion)) {
+        return false;
+    }
+    // For git refs (branches/SHAs) the MicroPython version is unknowable;
+    // trust the explicitly declared mpy-version.
+    if (!isMicropythonReleaseVersion(target.micropythonVersion)) {
+        return true;
+    }
+    return micropythonVersionSupportsRv32imc(target.micropythonVersion);
 }
 
 
@@ -49622,23 +49684,41 @@ function validateInputs() {
     // Parse mpy-version input
     const mpyVersionInput = core.getInput('mpy-version') || '';
     const micropythonVersionInput = core.getInput('micropython-version') || '';
-    // Check for mutually exclusive inputs
-    if (mpyVersionInput && micropythonVersionInput) {
-        throw new ValidationError('Cannot specify both mpy-version and micropython-version. Use one or the other.');
-    }
     // Determine build targets
     const buildTargets = [];
-    if (micropythonVersionInput) {
-        // Power user mode: using raw micropython-version
-        const micropythonVersions = micropythonVersionInput
+    const micropythonVersions = micropythonVersionInput
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean);
+    const isRefMode = micropythonVersions.length > 0 && !micropythonVersions.every(mpy_versions_1.isMicropythonReleaseVersion);
+    if (isRefMode) {
+        // Git ref mode: micropython-version is a branch or commit SHA (e.g. for
+        // testing a fork). The resulting MPY subversion cannot be derived from a
+        // ref, so the user must declare it via mpy-version.
+        if (micropythonVersions.length > 1) {
+            throw new ValidationError(`micropython-version "${micropythonVersionInput}" contains a git ref (branch or commit SHA); git refs cannot be combined with other versions.`);
+        }
+        const ref = micropythonVersions[0];
+        if (!/^[\w./-]+$/.test(ref) || ref.startsWith('-')) {
+            throw new ValidationError(`Invalid micropython-version "${ref}". Expected a release version (e.g. v1.22.2) or a git ref (branch name or commit SHA).`);
+        }
+        const mpyVersions = mpyVersionInput
             .split(',')
             .map((v) => v.trim())
             .filter(Boolean);
-        // Validate each version format
-        for (const version of micropythonVersions) {
-            if (!version.match(/^v?\d+\.\d+\.\d+(-[\w.]+)?$/)) {
-                throw new ValidationError(`Invalid micropython-version format "${version}". Expected format: v1.22.2, 1.22.2, or v1.25.0-preview.1`);
-            }
+        if (mpyVersions.length !== 1 || !mpy_versions_1.VALID_MPY_VERSIONS.includes(mpyVersions[0])) {
+            throw new ValidationError(`micropython-version "${ref}" is a git ref, so the resulting MPY subversion cannot be derived; set mpy-version to exactly one of: ${mpy_versions_1.VALID_MPY_VERSIONS.join(', ')} (e.g. mpy-version: 6.3).`);
+        }
+        buildTargets.push({
+            mpyVersion: mpyVersions[0],
+            micropythonVersion: ref,
+        });
+    }
+    else if (micropythonVersions.length > 0) {
+        // Power user mode: raw micropython-version release versions, mutually
+        // exclusive with mpy-version
+        if (mpyVersionInput) {
+            throw new ValidationError('Cannot specify both mpy-version and micropython-version. Use one or the other.');
         }
         // Create build targets from raw versions (deduplicating exact repeats).
         // Distinct MicroPython versions producing the same mpy subversion are

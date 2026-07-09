@@ -63,14 +63,30 @@ export function micropythonVersionSupportsRv32imc(micropythonVersion: string): b
 }
 
 /**
+ * Matches MicroPython release versions like v1.22.2, 1.22.2, or
+ * v1.25.0-preview.1. Anything else passed as micropython-version is treated
+ * as a git ref (branch or commit SHA).
+ */
+export const MICROPYTHON_VERSION_REGEX = /^v?\d+\.\d+\.\d+(-[\w.]+)?$/;
+
+export function isMicropythonReleaseVersion(version: string): boolean {
+  return MICROPYTHON_VERSION_REGEX.test(version);
+}
+
+/**
  * Check if a build target supports rv32imc architecture.
  * Both checks are needed: mpy 6.3 spans MicroPython v1.23.0+, but rv32imc
  * only exists in MicroPython >= 1.25.0, so a raw micropython-version of
  * v1.23.x/v1.24.x derives mpy 6.3 yet cannot build rv32imc.
  */
 export function targetSupportsRv32imc(target: BuildTarget): boolean {
-  return (
-    mpyVersionSupportsRv32imc(target.mpyVersion as MpyVersion) &&
-    micropythonVersionSupportsRv32imc(target.micropythonVersion)
-  );
+  if (!mpyVersionSupportsRv32imc(target.mpyVersion as MpyVersion)) {
+    return false;
+  }
+  // For git refs (branches/SHAs) the MicroPython version is unknowable;
+  // trust the explicitly declared mpy-version.
+  if (!isMicropythonReleaseVersion(target.micropythonVersion)) {
+    return true;
+  }
+  return micropythonVersionSupportsRv32imc(target.micropythonVersion);
 }

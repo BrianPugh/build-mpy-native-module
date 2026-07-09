@@ -74,10 +74,20 @@ Target architecture(s) to build. Default: `all`
 Override the MicroPython version directly instead of using the recommended version for each MPY subversion. Mutually exclusive with custom `mpy-version`.
 
 ```yaml
-# Use a specific MicroPython version (e.g., for testing a fork or pre-release)
+# Use a specific MicroPython version (e.g., for testing a pre-release)
 - uses: BrianPugh/build-mpy-native-module@main
   with:
     micropython-version: v1.26.0
+```
+
+A git branch name or commit SHA is also accepted. Since the MPY subversion can't be derived from a ref, `mpy-version` must then be set to declare it (this is the one case where the two inputs are combined):
+
+```yaml
+# Build against a MicroPython branch or commit
+- uses: BrianPugh/build-mpy-native-module@main
+  with:
+    micropython-version: my-feature-branch
+    mpy-version: 6.3 # subversion produced by that branch
 ```
 
 ### `micropython-repo`
@@ -89,6 +99,7 @@ MicroPython repository URL (useful for testing with forks). Default: `https://gi
   with:
     micropython-repo: https://github.com/myuser/micropython
     micropython-version: my-feature-branch
+    mpy-version: 6.3
 ```
 
 ### `source-dir`
@@ -314,6 +325,7 @@ jobs:
 - uses: BrianPugh/build-mpy-native-module@main
   with:
     micropython-version: my-feature-branch
+    mpy-version: 6.3 # required for branches/SHAs: declares the MPY subversion
     micropython-repo: https://github.com/myuser/micropython
     architecture: x64
 ```
