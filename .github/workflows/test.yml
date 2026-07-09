@@ -88,3 +88,43 @@ jobs:
         with:
           name: fnv1a32-all-architectures
           path: ${{ steps.build.outputs.output-dir }}/*.mpy
+
+  # ==========================================================================
+  # Git ref test: micropython-version as a branch instead of a release
+  # ==========================================================================
+
+  # Exercises the git-ref path: ls-remote SHA resolution for the cache key,
+  # shallow branch clone, and the required mpy-version pairing that drives
+  # output naming.
+  test-git-ref:
+    name: fnv1a32 (micropython-version branch ref)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout action
+        uses: actions/checkout@v7
+
+      - name: Checkout micropython-fnv1a32
+        uses: actions/checkout@v7
+        with:
+          repository: BrianPugh/micropython-fnv1a32
+          path: fnv1a32
+
+      - name: Build fnv1a32 from MicroPython master
+        uses: ./
+        id: build
+        with:
+          architecture: x64
+          micropython-version: master
+          mpy-version: 6.3
+          source-dir: fnv1a32
+
+      - name: Verify output
+        run: |
+          echo "mpy-file: ${{ steps.build.outputs.mpy-file }}"
+          echo "micropython-versions: ${{ steps.build.outputs.micropython-versions }}"
+          test -f "${{ steps.build.outputs.mpy-file }}"
+          # Filename must embed the declared mpy subversion
+          case "$(basename "${{ steps.build.outputs.mpy-file }}")" in
+            *mpy6.3-x64.mpy) echo "Filename OK" ;;
+            *) echo "::error::Unexpected filename"; exit 1 ;;
+          esac

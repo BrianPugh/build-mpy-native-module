@@ -6,6 +6,23 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { MPY_DIR, MPY_CROSS_PATH, CACHE_VERSION } from './constants';
 import { execWithRetry } from './utils';
+import { isMicropythonReleaseVersion } from './mpy-versions';
+
+/**
+ * Resolve a named ref (branch or tag) to its commit SHA on the remote.
+ * Returns null if the remote has no such ref (e.g. the ref is a bare SHA).
+ */
+async function resolveRemoteRef(repository: string, ref: string): Promise<string | null> {
+  try {
+    const output = await exec.getExecOutput('git', ['ls-remote', '--', repository, ref], {
+      silent: true,
+    });
+    const sha = output.stdout.trim().split('\n')[0]?.split(/\s+/)[0];
+    return sha || null;
+  } catch {
+    return null;
+  }
+}
 
 export async function setupMicroPython(
   version: string,
@@ -13,11 +30,29 @@ export async function setupMicroPython(
 ): Promise<void> {
   core.info(`Setting up MicroPython ${version}...`);
 
-  // Normalize version (ensure it starts with 'v')
-  const normalizedVersion = version.startsWith('v') ? version : `v${version}`;
+  // Release versions are normalized to their tag name (v-prefixed); anything
+  // else is a git ref (branch or commit SHA) used verbatim.
+  const isRelease = isMicropythonReleaseVersion(version);
+  const gitRef = isRelease && !version.startsWith('v') ? `v${version}` : version;
+
+  // Release tags are immutable, so they can key the cache directly. Branches
+  // move, so resolve them to a commit SHA first; if the remote has no such
+  // named ref, assume the ref itself is a bare commit SHA.
+  let cacheId = gitRef;
+  let isNamedRef = true;
+  if (!isRelease) {
+    const resolvedSha = await resolveRemoteRef(repository, gitRef);
+    if (resolvedSha) {
+      cacheId = resolvedSha;
+      core.info(`Resolved ref "${gitRef}" to ${resolvedSha}`);
+    } else {
+      isNamedRef = false;
+      core.info(`"${gitRef}" is not a named ref on the remote; treating it as a commit SHA`);
+    }
+  }
 
   // Try to restore from cache
-  const cacheKey = `micropython-${CACHE_VERSION}-${normalizedVersion}`;
+  const cacheKey = `micropython-${CACHE_VERSION}-${cacheId}`;
   const cachePaths = [MPY_DIR];
 
   let cacheHit = false;
@@ -33,21 +68,30 @@ export async function setupMicroPython(
 
   if (!cacheHit || !fs.existsSync(MPY_CROSS_PATH)) {
     // Clone MicroPython repository (with retry for transient network failures)
-    core.info(`Cloning MicroPython ${normalizedVersion}...`);
+    core.info(`Cloning MicroPython ${gitRef}...`);
 
     if (fs.existsSync(MPY_DIR)) {
       await exec.exec('rm', ['-rf', MPY_DIR]);
     }
 
-    await execWithRetry('git', [
-      'clone',
-      '--depth',
-      '1',
-      '--branch',
-      normalizedVersion,
-      repository,
-      MPY_DIR,
-    ]);
+    if (isNamedRef) {
+      // Tags and branches can be cloned shallowly
+      await execWithRetry('git', [
+        'clone',
+        '--depth',
+        '1',
+        '--branch',
+        gitRef,
+        repository,
+        MPY_DIR,
+      ]);
+    } else {
+      // A bare commit SHA cannot be passed to --branch; full clone, then checkout
+      await execWithRetry('git', ['clone', repository, MPY_DIR]);
+      await exec.exec('git', ['-c', 'advice.detachedHead=false', 'checkout', gitRef], {
+        cwd: MPY_DIR,
+      });
+    }
 
     // Build mpy-cross
     core.info('Building mpy-cross...');

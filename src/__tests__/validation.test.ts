@@ -7,6 +7,7 @@ import {
   mpyVersionSupportsRv32imc,
   micropythonVersionSupportsRv32imc,
   targetSupportsRv32imc,
+  isMicropythonReleaseVersion,
   VALID_MPY_VERSIONS,
   MPY_VERSION_MAP,
 } from '../mpy-versions';
@@ -84,6 +85,27 @@ describe('targetSupportsRv32imc', () => {
     expect(targetSupportsRv32imc({ mpyVersion: '6.3', micropythonVersion: 'v1.23.0' })).toBe(false);
     expect(targetSupportsRv32imc({ mpyVersion: '6.3', micropythonVersion: 'v1.24.1' })).toBe(false);
     expect(targetSupportsRv32imc({ mpyVersion: '6.3', micropythonVersion: 'v1.25.0' })).toBe(true);
+  });
+
+  it('trusts the declared mpy-version for git refs', () => {
+    // A branch or SHA has no parseable MicroPython version; defer to mpy-version
+    expect(targetSupportsRv32imc({ mpyVersion: '6.3', micropythonVersion: 'master' })).toBe(true);
+    expect(targetSupportsRv32imc({ mpyVersion: '6.2', micropythonVersion: 'master' })).toBe(false);
+  });
+});
+
+describe('isMicropythonReleaseVersion', () => {
+  it('matches release versions', () => {
+    expect(isMicropythonReleaseVersion('v1.22.2')).toBe(true);
+    expect(isMicropythonReleaseVersion('1.22.2')).toBe(true);
+    expect(isMicropythonReleaseVersion('v1.25.0-preview.1')).toBe(true);
+  });
+
+  it('rejects branches and SHAs', () => {
+    expect(isMicropythonReleaseVersion('master')).toBe(false);
+    expect(isMicropythonReleaseVersion('my-feature-branch')).toBe(false);
+    expect(isMicropythonReleaseVersion('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0')).toBe(false);
+    expect(isMicropythonReleaseVersion('v1.25')).toBe(false);
   });
 });
 
@@ -230,6 +252,94 @@ describe('validateInputs', () => {
     const config = validateInputs();
     expect(config.buildTargets[0].mpyVersion).toBe('5');
     expect(config.buildTargets[0].micropythonVersion).toBe('v1.12.0');
+  });
+
+  it('accepts a git ref micropython-version when mpy-version is declared', () => {
+    mockedCore.getInput.mockImplementation((name: string) => {
+      if (name === 'source-dir') return tempDir;
+      if (name === 'micropython-version') return 'my-feature-branch';
+      if (name === 'mpy-version') return '6.3';
+      return '';
+    });
+
+    const config = validateInputs();
+    expect(config.buildTargets).toEqual([
+      { mpyVersion: '6.3', micropythonVersion: 'my-feature-branch' },
+    ]);
+  });
+
+  it('accepts a commit SHA micropython-version when mpy-version is declared', () => {
+    mockedCore.getInput.mockImplementation((name: string) => {
+      if (name === 'source-dir') return tempDir;
+      if (name === 'micropython-version') return 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0';
+      if (name === 'mpy-version') return '6.2';
+      return '';
+    });
+
+    const config = validateInputs();
+    expect(config.buildTargets[0].micropythonVersion).toBe(
+      'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0'
+    );
+    expect(config.buildTargets[0].mpyVersion).toBe('6.2');
+  });
+
+  it('throws error for a git ref without mpy-version', () => {
+    mockedCore.getInput.mockImplementation((name: string) => {
+      if (name === 'source-dir') return tempDir;
+      if (name === 'micropython-version') return 'my-feature-branch';
+      return '';
+    });
+
+    expect(() => validateInputs()).toThrow(ValidationError);
+    expect(() => validateInputs()).toThrow('cannot be derived');
+  });
+
+  it('throws error for a git ref with multiple mpy-versions', () => {
+    mockedCore.getInput.mockImplementation((name: string) => {
+      if (name === 'source-dir') return tempDir;
+      if (name === 'micropython-version') return 'master';
+      if (name === 'mpy-version') return '6.2, 6.3';
+      return '';
+    });
+
+    expect(() => validateInputs()).toThrow('exactly one');
+  });
+
+  it('throws error for a git ref combined with release versions', () => {
+    mockedCore.getInput.mockImplementation((name: string) => {
+      if (name === 'source-dir') return tempDir;
+      if (name === 'micropython-version') return 'v1.22.2, my-feature-branch';
+      if (name === 'mpy-version') return '6.3';
+      return '';
+    });
+
+    expect(() => validateInputs()).toThrow('cannot be combined');
+  });
+
+  it('throws error for git refs with invalid characters', () => {
+    for (const badRef of ['-rf', 'my branch', 'branch$(evil)']) {
+      mockedCore.getInput.mockImplementation((name: string) => {
+        if (name === 'source-dir') return tempDir;
+        if (name === 'micropython-version') return badRef;
+        if (name === 'mpy-version') return '6.3';
+        return '';
+      });
+
+      expect(() => validateInputs()).toThrow(ValidationError);
+    }
+  });
+
+  it('allows rv32imc for a git ref with mpy-version 6.3', () => {
+    mockedCore.getInput.mockImplementation((name: string) => {
+      if (name === 'source-dir') return tempDir;
+      if (name === 'architecture') return 'rv32imc';
+      if (name === 'micropython-version') return 'master';
+      if (name === 'mpy-version') return '6.3';
+      return '';
+    });
+
+    const config = validateInputs();
+    expect(config.architectures).toEqual(['rv32imc']);
   });
 
   it('accepts micropython-versions with distinct mpy subversions', () => {

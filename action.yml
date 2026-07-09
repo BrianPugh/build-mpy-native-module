@@ -17,7 +17,7 @@ inputs:
     default: ''
 
   micropython-version:
-    description: 'Advanced: Override MicroPython version directly instead of using mpy-version. Mutually exclusive with mpy-version.'
+    description: 'Advanced: Override MicroPython version directly instead of using mpy-version. Accepts release versions (v1.25.0), or a git branch/commit SHA (which requires mpy-version to declare the resulting MPY subversion). Release versions are mutually exclusive with mpy-version.'
     required: false
     default: ''
 
