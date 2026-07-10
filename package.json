@@ -40,7 +40,7 @@
   "author": "Brian Pugh <bnp117@gmail.com>",
   "license": "Apache-2.0",
   "dependencies": {
-    "@actions/cache": "^5.1.0",
+    "@actions/cache": "^6.1.0",
     "@actions/core": "^2.0.3",
     "@actions/exec": "^2.0.0",
     "@actions/glob": "^0.5.1",
